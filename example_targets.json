@@ -1,8 +1,0 @@
-[
-  {
-    "url": "https://example.com/board",
-    "write_selectors": ["button:has-text(\"글쓰기\")"],
-    "form_selectors": ["form textarea", "form input[name='title']"],
-    "modal_selectors": ["div.modal", "div.alert"]
-  }
-]
