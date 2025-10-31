@@ -17,6 +17,31 @@ programmatically confirm that posting is possible without manual inspection.
 * Includes a simple Tkinter GUI so non-technical users can run checks, monitor
   progress, and export the results.
 
+## Getting the project onto your computer
+
+There are two convenient ways to bring the project files to your PC:
+
+1. **Clone the repository (recommended when Git is available).**
+   ```bash
+   git clone https://github.com/<your-account>/<repo-name>.git
+   cd <repo-name>
+   ```
+   Replace `<your-account>/<repo-name>` with the path of your GitHub fork. Git
+   preserves the full history and lets you keep up with future changes via
+   `git pull`.
+
+2. **Download a ZIP archive from GitHub.** On the repository page click
+   **Code → Download ZIP**, unzip it on your computer, and open the folder in a
+   terminal. This approach works even when Git is not installed—just remember to
+   download a fresh copy whenever the repository changes.
+
+If you prefer to copy the files manually (for example, by using the clipboard),
+create the four files listed in this repository—`check_board_posting.py`,
+`example_targets.json`, `requirements.txt`, and `README.md`—and paste the
+corresponding contents into each file. Using Git clone or the ZIP download is
+less error-prone because it guarantees all files and directories match the
+original structure.
+
 ## Installation
 
 ```bash
