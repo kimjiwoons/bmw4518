@@ -1,0 +1,3 @@
+https://www.example.com/notice
+https://www.example.com/freeboard
+# https://www.example.com/private-board (commented out)
