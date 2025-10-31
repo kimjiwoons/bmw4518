@@ -24,10 +24,14 @@ import asyncio
 import csv
 import json
 import logging
+import queue
+import threading
+import tkinter as tk
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from tkinter import filedialog, messagebox, ttk
+from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from playwright.async_api import Dialog, Error, Page, Playwright, async_playwright
 
@@ -140,10 +144,16 @@ async def _capture_modal_message(page: Page, selectors: Sequence[str]) -> Option
     return None
 
 
-async def check_target(playwright: Playwright, target: Target, timeout: float) -> Result:
+async def check_target(
+    playwright: Playwright,
+    target: Target,
+    timeout: float,
+    *,
+    headless: bool = True,
+) -> Result:
     """Execute the write-form test for a single target."""
 
-    browser = await playwright.chromium.launch(headless=True)
+    browser = await playwright.chromium.launch(headless=headless)
     page = await browser.new_page()
 
     dialog_messages: List[str] = []
@@ -202,17 +212,30 @@ def iter_targets(config_path: Path) -> Iterable[Target]:
         yield Target.from_dict(entry)
 
 
-async def run_checks(config_path: Path, timeout: float) -> List[Result]:
+async def run_checks(
+    config_path: Path,
+    timeout: float,
+    *,
+    headless: bool = True,
+    progress_callback: Optional[Callable[[Result], None]] = None,
+) -> List[Result]:
     async with async_playwright() as playwright:
         results: List[Result] = []
         for target in iter_targets(config_path):
             logging.info("Checking %s", target.url)
             try:
-                result = await check_target(playwright, target, timeout)
+                result = await check_target(
+                    playwright,
+                    target,
+                    timeout,
+                    headless=headless,
+                )
             except Exception as err:  # pylint: disable=broad-except
                 logging.exception("Unhandled error for %s", target.url)
                 result = Result(target.url, "fail", f"Unhandled error: {err}")
             results.append(result)
+            if progress_callback:
+                progress_callback(result)
         return results
 
 
@@ -227,9 +250,9 @@ def write_results(results: Sequence[Result], output_path: Path) -> None:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "config",
+        "--config",
         type=Path,
-        help="Path to JSON file containing target configuration.",
+        help="Path to JSON file containing target configuration for CLI mode.",
     )
     parser.add_argument(
         "--output",
@@ -248,7 +271,248 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Enable verbose debug logging.",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the graphical interface instead of running via CLI.",
+    )
+    parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Show the browser window while running checks.",
+    )
     return parser.parse_args(argv)
+
+
+class CheckerGUI:
+    """Tkinter-based GUI for running board posting checks."""
+
+    def __init__(self, root: tk.Tk, *, default_timeout: float, headless: bool = True):
+        self.root = root
+        self.root.title("Board Posting Checker")
+
+        self.config_var = tk.StringVar()
+        self.timeout_var = tk.StringVar(value=str(int(default_timeout)))
+        self.headless_var = tk.BooleanVar(value=headless)
+        self.status_var = tk.StringVar(value="Idle")
+
+        self.results: List[Result] = []
+        self._progress_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
+        self._worker_thread: Optional[threading.Thread] = None
+
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        padding = {"padx": 8, "pady": 4}
+
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        config_frame = ttk.Frame(main_frame)
+        config_frame.pack(fill=tk.X, **padding)
+
+        ttk.Label(config_frame, text="Config JSON:").pack(side=tk.LEFT)
+        self.config_entry = ttk.Entry(config_frame, textvariable=self.config_var, width=60)
+        self.config_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 4))
+        self.browse_button = ttk.Button(config_frame, text="Browse", command=self._browse_config)
+        self.browse_button.pack(side=tk.LEFT)
+
+        options_frame = ttk.Frame(main_frame)
+        options_frame.pack(fill=tk.X, **padding)
+
+        ttk.Label(options_frame, text="Timeout (ms):").pack(side=tk.LEFT)
+        ttk.Entry(options_frame, textvariable=self.timeout_var, width=10).pack(
+            side=tk.LEFT, padx=(8, 16)
+        )
+
+        self.headless_check = ttk.Checkbutton(
+            options_frame,
+            text="Run headless",
+            variable=self.headless_var,
+        )
+        self.headless_check.pack(side=tk.LEFT)
+
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill=tk.X, **padding)
+
+        self.run_button = ttk.Button(buttons_frame, text="Run Check", command=self._start_check)
+        self.run_button.pack(side=tk.LEFT)
+
+        self.save_button = ttk.Button(buttons_frame, text="Save Results", command=self._save_results)
+        self.save_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.save_button.state(["disabled"])
+
+        self.clear_button = ttk.Button(buttons_frame, text="Clear", command=self._clear_results)
+        self.clear_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(main_frame, textvariable=self.status_var).pack(anchor=tk.W, **padding)
+
+        columns = ("url", "status", "message")
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+        self.tree.heading("url", text="URL")
+        self.tree.heading("status", text="Status")
+        self.tree.heading("message", text="Message")
+        self.tree.column("url", width=260)
+        self.tree.column("status", width=80, anchor=tk.CENTER)
+        self.tree.column("message", width=360)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _browse_config(self) -> None:
+        file_path = filedialog.askopenfilename(
+            title="Select target JSON",
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*")),
+        )
+        if file_path:
+            self.config_var.set(file_path)
+
+    def _set_running_state(self, running: bool) -> None:
+        state = "disabled" if running else "!disabled"
+        for widget in (
+            self.run_button,
+            self.clear_button,
+            self.browse_button,
+        ):
+            widget.state([state])
+        self.config_entry.state([state])
+        self.headless_check.state([state])
+        if running:
+            self.save_button.state(["disabled"])
+
+    def _start_check(self) -> None:
+        if self._worker_thread and self._worker_thread.is_alive():
+            messagebox.showinfo("Checker", "A check is already running.")
+            return
+
+        try:
+            timeout_value = float(self.timeout_var.get())
+        except ValueError:
+            messagebox.showerror("Checker", "Timeout must be a numeric value (milliseconds).")
+            return
+
+        if timeout_value <= 0:
+            messagebox.showerror("Checker", "Timeout must be greater than zero.")
+            return
+
+        config_text = self.config_var.get().strip()
+        if not config_text:
+            messagebox.showerror("Checker", "Please choose a valid config JSON file.")
+            return
+
+        config_path = Path(config_text).expanduser()
+        if not config_path.exists():
+            messagebox.showerror("Checker", "Please choose a valid config JSON file.")
+            return
+
+        self.results.clear()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        self.status_var.set("Running...")
+        self._set_running_state(True)
+
+        headless = self.headless_var.get()
+
+        self._progress_queue = queue.Queue()
+
+        def worker() -> None:
+            try:
+                def _progress(result: Result) -> None:
+                    self._progress_queue.put(("progress", result))
+
+                results = asyncio.run(
+                    run_checks(
+                        config_path,
+                        timeout_value,
+                        headless=headless,
+                        progress_callback=_progress,
+                    )
+                )
+                self._progress_queue.put(("complete", results))
+            except FileNotFoundError as err:
+                self._progress_queue.put(("error", f"Config not found: {err}"))
+            except json.JSONDecodeError as err:
+                self._progress_queue.put(("error", f"Invalid JSON: {err}"))
+            except Exception as err:  # pylint: disable=broad-except
+                logging.exception("Worker thread error")
+                self._progress_queue.put(("error", str(err)))
+
+        self._worker_thread = threading.Thread(target=worker, daemon=True)
+        self._worker_thread.start()
+        self.root.after(100, self._poll_queue)
+
+    def _poll_queue(self) -> None:
+        try:
+            while True:
+                kind, payload = self._progress_queue.get_nowait()
+                if kind == "progress":
+                    result = payload  # type: ignore[assignment]
+                    self.results.append(result)
+                    self.tree.insert(
+                        "",
+                        tk.END,
+                        values=(result.url, result.status, result.message),
+                    )
+                    self.status_var.set(f"Last checked: {result.url}")
+                elif kind == "complete":
+                    self.results = list(payload)  # type: ignore[assignment]
+                    self.status_var.set("Completed")
+                    self._set_running_state(False)
+                    self.save_button.state(["!disabled"])
+                elif kind == "error":
+                    messagebox.showerror("Checker", str(payload))
+                    self.status_var.set("Error")
+                    self._set_running_state(False)
+                    self.save_button.state(["disabled"])
+        except queue.Empty:
+            pass
+
+        if self._worker_thread and self._worker_thread.is_alive():
+            self.root.after(100, self._poll_queue)
+
+    def _save_results(self) -> None:
+        if not self.results:
+            messagebox.showinfo("Checker", "No results to save yet.")
+            return
+
+        default_name = f"results_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        file_path = filedialog.asksaveasfilename(
+            title="Save results",
+            initialfile=default_name,
+            defaultextension=".csv",
+            filetypes=(("CSV", "*.csv"), ("All files", "*.*")),
+        )
+        if not file_path:
+            return
+
+        try:
+            write_results(self.results, Path(file_path))
+            messagebox.showinfo("Checker", f"Saved results to {file_path}")
+        except OSError as err:
+            messagebox.showerror("Checker", f"Failed to save results: {err}")
+
+    def _clear_results(self) -> None:
+        if self._worker_thread and self._worker_thread.is_alive():
+            messagebox.showinfo("Checker", "Cannot clear while a check is running.")
+            return
+
+        self.results.clear()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.status_var.set("Cleared")
+        self.save_button.state(["disabled"])
+
+
+def launch_gui(default_timeout: float, *, headless: bool = True) -> None:
+    root = tk.Tk()
+    CheckerGUI(root, default_timeout=default_timeout, headless=headless)
+    root.mainloop()
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -258,8 +522,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    if args.gui or args.config is None:
+        launch_gui(args.timeout, headless=not args.headful)
+        return 0
+
     try:
-        results = asyncio.run(run_checks(args.config, args.timeout))
+        results = asyncio.run(
+            run_checks(
+                args.config,
+                args.timeout,
+                headless=not args.headful,
+            )
+        )
     except FileNotFoundError:
         logging.error("Config file not found: %s", args.config)
         return 1

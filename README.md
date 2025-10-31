@@ -1,6 +1,6 @@
 # Board posting capability checker
 
-This repository contains a Playwright-based automation script that verifies
+This repository contains a Playwright-based automation toolkit that verifies
 whether a bulletin board allows visitors to open the post creation form.  It
 is useful when you maintain a list of community boards and need to
 programmatically confirm that posting is possible without manual inspection.
@@ -14,6 +14,8 @@ programmatically confirm that posting is possible without manual inspection.
   message shown when posting is restricted (e.g., requires membership).
 * Records the outcome for every board (`success` when the form loads, `fail`
   otherwise) in a CSV file along with the detected message.
+* Includes a simple Tkinter GUI so non-technical users can run checks, monitor
+  progress, and export the results.
 
 ## Installation
 
@@ -45,12 +47,32 @@ set of heuristic selectors that work for many boards.
 
 ## Usage
 
+### Graphical interface
+
+Launch the GUI directly (with no arguments) or by passing the `--gui` flag. Use
+the “Browse” button to choose your configuration JSON, adjust the timeout if
+necessary, and click **Run Check**. Once the scan finishes you can export the
+table to CSV.
+
+```bash
+python check_board_posting.py
+# or
+python check_board_posting.py --gui
+```
+
+To visually observe browser activity, uncheck **Run headless** inside the GUI
+before starting the scan.
+
+### Command line
+
 Run the checker and provide the configuration JSON.  By default the results are
 written to `results.csv` in the current directory.
 
 ```bash
-python check_board_posting.py targets.json --output board_results.csv --verbose
+python check_board_posting.py --config targets.json --output board_results.csv --verbose
 ```
+
+To watch the browser while running through the command line, pass `--headful`.
 
 The CSV file contains the following columns:
 
