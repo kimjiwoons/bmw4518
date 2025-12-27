@@ -668,9 +668,10 @@ class ADBController:
             # 이전 오차를 반영한 목표 거리
             target = base_distance - self._scroll_debt
 
-            # 목표 기준으로 랜덤 범위 설정 (300~500 범위 유지)
+            # 목표 기준으로 랜덤 범위 설정 (300~400 범위, 400 초과 안함)
+            # 계산이 400px 기준이므로 오버슈팅 방지
             min_dist = max(base_distance - random_range, target - random_range // 2)
-            max_dist = min(base_distance + random_range, target + random_range // 2)
+            max_dist = min(base_distance, target + random_range // 2)  # 400px 상한
 
             # 범위가 역전되면 보정
             if min_dist > max_dist:
