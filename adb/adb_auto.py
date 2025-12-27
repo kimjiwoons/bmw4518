@@ -470,6 +470,7 @@ class ADBController:
         self.screen_height = phone_config.get("screen_height", 1440)
         self._last_xml = None
         self._last_xml_time = 0
+        self._scroll_debt = 0  # 보상 스크롤용 오차 누적
     
     def run_adb(self, command, timeout=None):
         timeout = timeout or ADB_CONFIG["command_timeout"]
@@ -550,30 +551,57 @@ class ADBController:
         log(f"스와이프: ({int(x1)}, {int(y1)}) → ({int(x2)}, {int(y2)}), {duration_ms}ms")
         self.shell(f"input swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {duration_ms}")
     
-    def scroll_down(self, distance=None, fixed=False):
+    def scroll_down(self, distance=None, fixed=False, compensated=False):
         """아래로 스크롤 (컨텐츠가 위로 올라감 = 아래 내용 보기)
 
         Args:
             distance: 스크롤 거리 (None이면 설정값 사용)
-            fixed: True면 랜덤 없이 고정 거리 사용 (CDP 계산 모드용)
-        """
-        if distance is None:
-            if fixed:
-                # CDP 계산 모드: 고정 거리 (랜덤 없음)
-                distance = SCROLL_CONFIG["distance"]
-            else:
-                # 일반 모드: 랜덤 거리
-                distance = SCROLL_CONFIG["distance"] + random.randint(
-                    -SCROLL_CONFIG["distance_random"], SCROLL_CONFIG["distance_random"])
+            fixed: True면 랜덤 없이 고정 거리 사용
+            compensated: True면 보상 스크롤 모드 (랜덤이지만 총 이동량 정확)
 
+        보상 스크롤 모드:
+            - 랜덤하게 스크롤하되, 오차를 누적해서 다음 스크롤에서 보상
+            - 예: 목표 400px인데 450px 갔으면, 다음엔 350px 목표로 조정
+            - 결과: 자연스러운 랜덤 + 정확한 총 이동량
+        """
+        base_distance = SCROLL_CONFIG["distance"]  # 400
+        random_range = SCROLL_CONFIG["distance_random"]  # 100
+
+        if distance is not None:
+            # 직접 거리 지정된 경우
+            actual_distance = distance
+        elif fixed:
+            # 고정 모드: 정확히 base_distance
+            actual_distance = base_distance
+        elif compensated:
+            # 보상 스크롤 모드: 랜덤이지만 오차 보상
+            # 이전 오차를 반영한 목표 거리
+            target = base_distance - self._scroll_debt
+
+            # 목표 기준으로 랜덤 범위 설정 (300~500 범위 유지)
+            min_dist = max(base_distance - random_range, target - random_range // 2)
+            max_dist = min(base_distance + random_range, target + random_range // 2)
+
+            # 범위가 역전되면 보정
+            if min_dist > max_dist:
+                min_dist, max_dist = max_dist, min_dist
+
+            actual_distance = random.randint(int(min_dist), int(max_dist))
+
+            # 오차 누적 (실제 - 기준)
+            self._scroll_debt += (actual_distance - base_distance)
+        else:
+            # 일반 랜덤 모드
+            actual_distance = base_distance + random.randint(-random_range, random_range)
+
+        # X 좌표
         if fixed:
-            # CDP 계산 모드: X 좌표도 고정
             x = COORDINATES["scroll_x"]
         else:
             x = COORDINATES["scroll_x"] + random.randint(-30, 30)
 
         start_y = COORDINATES["scroll_start_y"]  # 1100
-        end_y = start_y - distance  # 700쯤 (위로 스와이프)
+        end_y = start_y - actual_distance
 
         self.swipe(x, start_y, x, end_y)
 
@@ -582,6 +610,16 @@ class ADBController:
             pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
             log(f"읽기 멈춤: {pause:.1f}초")
             time.sleep(pause)
+
+        return actual_distance
+
+    def reset_scroll_debt(self):
+        """스크롤 오차 누적 초기화 (새 스크롤 시퀀스 시작 시 호출)"""
+        self._scroll_debt = 0
+
+    def get_scroll_debt(self):
+        """현재 스크롤 오차 확인"""
+        return self._scroll_debt
     
     def scroll_up(self, distance=None):
         """위로 스크롤 (컨텐츠가 아래로 내려감 = 위 내용 보기)"""
@@ -1125,11 +1163,14 @@ class NaverSearchAutomation:
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("more_scroll_count", 0) > 0:
             cdp_scroll = self.cdp_info["more_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (fixed 모드)")
+            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (보상 모드)")
 
-            # 덤프 없이 빠르게 스크롤 (fixed=True: 랜덤 없이 정확한 거리)
+            # 스크롤 오차 초기화
+            self.adb.reset_scroll_debt()
+
+            # 덤프 없이 빠르게 스크롤 (compensated=True: 랜덤이지만 총 이동량 정확)
             for i in range(cdp_scroll):
-                self.adb.scroll_down(fixed=True)
+                self.adb.scroll_down(compensated=True)
 
                 # 읽기 멈춤 (확률적)
                 if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
@@ -1142,9 +1183,11 @@ class NaverSearchAutomation:
                 if (i + 1) % 10 == 0:
                     log(f"[5단계] 스크롤 {i + 1}/{cdp_scroll}...")
 
+            log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
+
             # 여유분은 이미 CDP 계산에 포함됨 (margin 설정)
             # 추가 여유분 없음
-            
+
             # 덤프해서 더보기 찾기
             xml = self.adb.get_screen_xml(force=True)
             element = self.adb.find_element_by_text(target, xml=xml)
@@ -1258,11 +1301,14 @@ class NaverSearchAutomation:
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("domain_scroll_count", -1) >= 0:
             cdp_scroll = self.cdp_info["domain_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (fixed 모드)")
+            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (보상 모드)")
 
-            # 덤프 없이 빠르게 스크롤 (fixed=True: 랜덤 없이 정확한 거리)
+            # 스크롤 오차 초기화
+            self.adb.reset_scroll_debt()
+
+            # 덤프 없이 빠르게 스크롤 (compensated=True: 랜덤이지만 총 이동량 정확)
             for i in range(cdp_scroll):
-                self.adb.scroll_down(fixed=True)
+                self.adb.scroll_down(compensated=True)
 
                 if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
                     pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
@@ -1274,8 +1320,7 @@ class NaverSearchAutomation:
                 if (i + 1) % 10 == 0:
                     log(f"[7단계] 스크롤 {i + 1}/{cdp_scroll}...")
 
-            # 여유분은 이미 CDP 계산에 포함됨 (margin 설정)
-            # 추가 여유분 없음
+            log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
             # 덤프해서 도메인 찾기
             return self._find_and_click_domain_final(domain)
