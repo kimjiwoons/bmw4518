@@ -1358,6 +1358,12 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
+            # 여유분 스크롤 1회 추가 (100~150px)
+            extra_scroll = random.randint(100, 150)
+            log(f"[7단계] 여유분 스크롤: {extra_scroll}px")
+            self.adb.scroll_down(extra_scroll)
+            time.sleep(random.uniform(0.2, 0.4))
+
             # 덤프해서 도메인 찾기
             return self._find_and_click_domain_final(domain)
         
