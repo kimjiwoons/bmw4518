@@ -238,9 +238,11 @@ class CDPCalculator:
             const targetDomain = "{domain}";
             const baseDomain = "{base_domain}";
             const hasPath = {"true" if has_path else "false"};
+            const debugLogs = [];
 
             // 베이스 도메인이 포함된 모든 링크 찾기
             const allLinks = document.querySelectorAll('a[href*="' + baseDomain + '"]');
+            debugLogs.push('[CDP] 총 ' + allLinks.length + '개 링크 발견 (base: ' + baseDomain + ')');
 
             for (const link of allLinks) {{
                 const href = link.getAttribute('href');
@@ -248,7 +250,10 @@ class CDPCalculator:
 
                 // sublink 제외 (서브링크는 위치 겹침 문제)
                 const heatmapTarget = link.getAttribute('data-heatmap-target');
-                if (heatmapTarget === '.sublink') continue;
+                if (heatmapTarget === '.sublink') {{
+                    debugLogs.push('[CDP] 제외(sublink): ' + href.substring(0, 60));
+                    continue;
+                }}
 
                 // 정확한 매칭 체크
                 let isMatch = false;
@@ -264,7 +269,10 @@ class CDPCalculator:
                     }}
                 }}
 
-                if (!isMatch) continue;
+                if (!isMatch) {{
+                    debugLogs.push('[CDP] 제외(경로불일치): ' + href.substring(0, 60));
+                    continue;
+                }}
 
                 // 웹사이트 영역 체크 (type-web 클래스 확인)
                 let isWebArea = false;
@@ -283,6 +291,7 @@ class CDPCalculator:
 
                 const rect = link.getBoundingClientRect();
                 if (rect.height > 0 && rect.width > 50) {{
+                    debugLogs.push('[CDP] ✓ 매칭! href=' + href.substring(0, 60) + ' Y=' + (rect.top + window.scrollY).toFixed(0));
                     return {{
                         found: true,
                         y: rect.top + window.scrollY,
@@ -293,17 +302,24 @@ class CDPCalculator:
                         centerY: rect.top + rect.height / 2,
                         href: link.href,
                         text: link.textContent.trim().substring(0, 50),
-                        isWebArea: isWebArea
+                        isWebArea: isWebArea,
+                        debugLogs: debugLogs
                     }};
                 }}
             }}
 
-            return {{ found: false }};
+            return {{ found: false, debugLogs: debugLogs }};
         }})()
         """
         result = self.evaluate(js)
+        # 디버그 로그 출력
+        if result and result.get("debugLogs"):
+            for debug_log in result["debugLogs"]:
+                log(debug_log)
         if result and result.get("found"):
-            self._debug_log(f"도메인 발견: '{result.get('text', '')[:30]}' Y={result['y']:.0f}")
+            log(f"[CDP] 도메인 발견: '{result.get('text', '')[:30]}' href={result.get('href', '')[:50]}")
+        else:
+            log(f"[CDP] 도메인 못 찾음: {domain}")
         return result
 
     def scroll_to(self, y):
@@ -926,24 +942,29 @@ class ADBController:
         base_domain = domain.split('/')[0]
 
         links = []
+        found_count = 0
         # text 또는 content-desc에서 베이스 도메인 포함된 요소 찾기
         node_pattern = rf'<node[^>]+(?:text|content-desc)="([^"]*{re.escape(base_domain)}[^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
 
         for match in re.finditer(node_pattern, xml, re.IGNORECASE):
             text_found, x1, y1, x2, y2 = match.groups()
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            found_count += 1
 
             # 유효한 bounds만
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
+                log(f"[ADB] 제외(bounds=0): {text_found[:50]}")
                 continue
 
             # URL 인코딩된 텍스트 제외 (파비콘, 이미지 URL 등)
             # sunny?src=https%3A%2F%2Fsidecut.co.kr%2Ffavicon 같은 것
             if '%2F' in text_found or '%3A' in text_found or 'sunny?' in text_found.lower():
+                log(f"[ADB] 제외(URL인코딩): {text_found[:50]}")
                 continue
 
             # http로 시작하는 URL 제외
             if text_found.lower().startswith(('http://', 'https://')):
+                log(f"[ADB] 제외(http): {text_found[:50]}")
                 continue
 
             # 정확한 매칭 체크
@@ -959,10 +980,13 @@ class ADBController:
                 text_after_domain = text_found.split(domain)[-1].strip() if domain in text_found else ""
                 if domain in text_found and not text_after_domain.startswith(('/', '›', '>')):
                     is_match = True
+                else:
+                    log(f"[ADB] 제외(서브페이지): {text_found[:50]} (뒤: '{text_after_domain[:20]}')")
 
             if not is_match:
                 continue
 
+            log(f"[ADB] ✓ 매칭! {text_found[:40]} bounds=[{x1},{y1}][{x2},{y2}]")
             links.append({
                 "found": True,
                 "text": text_found,
@@ -971,6 +995,7 @@ class ADBController:
                 "center_y": (y1 + y2) // 2
             })
 
+        log(f"[ADB] 총 {found_count}개 요소 검사, {len(links)}개 매칭")
         return links
     
     def click_search_button(self):
