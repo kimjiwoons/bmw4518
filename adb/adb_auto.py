@@ -384,6 +384,43 @@ class CDPCalculator:
 
         return final_count
 
+    def _calculate_scroll_count_no_margin(self, element_y, target_position, scroll_distance):
+        """도메인 찾기용 스크롤 횟수 계산 (마진 없음, 오버슈팅 방지)
+
+        Args:
+            element_y: 요소의 절대 Y 좌표 (문서 기준)
+            target_position: 화면에서 요소가 위치할 비율 (0.0~1.0)
+            scroll_distance: ADB 스크롤 1회 거리 (픽셀)
+
+        Returns:
+            int: 필요한 스크롤 횟수
+        """
+        # 타겟 위치
+        target_screen_y = self.effective_viewport_height * target_position
+
+        # 필요한 스크롤 양
+        scroll_needed = element_y - target_screen_y
+
+        # 스크롤 보정 계수 적용
+        calibration = CDP_CONFIG.get("scroll_calibration", 0.85)
+        effective_scroll = scroll_distance * calibration
+
+        if effective_scroll <= 0:
+            return 0
+
+        raw_count = scroll_needed / effective_scroll
+
+        # 마진 없이 반올림 (오버슈팅보다 언더슈팅이 나음)
+        final_count = max(0, round(raw_count))
+
+        # 디버그 로그
+        log(f"[CDP-계산-도메인] 요소Y={element_y:.0f}, 뷰포트={self.effective_viewport_height}, 타겟비율={target_position}")
+        log(f"[CDP-계산-도메인] 타겟Y={target_screen_y:.0f}, 필요스크롤={scroll_needed:.0f}px")
+        log(f"[CDP-계산-도메인] 스크롤거리={scroll_distance}, 보정={calibration}, 유효거리={effective_scroll:.0f}px")
+        log(f"[CDP-계산-도메인] 기본횟수={raw_count:.1f}, 마진=0, 최종={final_count}회")
+
+        return final_count
+
     def calculate_scroll_info(self, keyword, domain, screen_width, screen_height):
         """검색어로 스크롤 정보 미리 계산 (정확도 향상 버전)
 
@@ -482,7 +519,8 @@ class CDPCalculator:
                     log(f"[CDP] 찾은 텍스트: {domain_info.get('text', 'N/A')[:50]}")
 
                     target_pos = CDP_CONFIG.get("domain_target_position", 0.35)
-                    result["domain_scroll_count"] = self._calculate_scroll_count(
+                    # 도메인은 마진 없이 계산 (오버슈팅 방지)
+                    result["domain_scroll_count"] = self._calculate_scroll_count_no_margin(
                         domain_y, target_pos, scroll_distance
                     )
 
@@ -1419,11 +1457,8 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
-            # 여유분 스크롤 1회 추가 (100~150px)
-            extra_scroll = random.randint(100, 150)
-            log(f"[7단계] 여유분 스크롤: {extra_scroll}px")
-            self.adb.scroll_down(extra_scroll)
-            time.sleep(random.uniform(0.2, 0.4))
+            # 여유분 스크롤 제거 - 오버슈팅 방지
+            # 못 찾으면 추가 스크롤하면 됨
 
             # 덤프해서 도메인 찾기
             return self._find_and_click_domain_final(domain)
