@@ -220,16 +220,47 @@ class CDPCalculator:
         return result
 
     def get_domain_info(self, domain):
-        """도메인 링크 찾기 (개선된 버전)
+        """도메인 링크 찾기 (정확한 경로 매칭 버전)
+
+        - sidecut.co.kr 지정 시: sidecut.co.kr만 매칭 (서브페이지 제외)
+        - sidecut.co.kr/lessons 지정 시: 정확히 그 경로만 매칭
 
         Returns:
             dict: {found, y, screenY, height, href, text}
         """
+        # 경로 포함 여부 확인
+        has_path = '/' in domain and not domain.endswith('/')
+        base_domain = domain.split('/')[0]
+
         js = f"""
         (function() {{
-            // 1순위: href에 도메인 포함된 링크
-            const links = document.querySelectorAll('a[href*="{domain}"]');
-            for (const link of links) {{
+            const targetDomain = "{domain}";
+            const baseDomain = "{base_domain}";
+            const hasPath = {"true" if has_path else "false"};
+
+            // 베이스 도메인이 포함된 모든 링크 찾기
+            const allLinks = document.querySelectorAll('a[href*="' + baseDomain + '"]');
+
+            for (const link of allLinks) {{
+                const href = link.getAttribute('href');
+                if (!href) continue;
+
+                // 정확한 매칭 체크
+                let isMatch = false;
+                if (hasPath) {{
+                    // 경로가 지정된 경우: 정확한 경로 매칭
+                    if (href.endsWith(targetDomain) || href.endsWith(targetDomain + '/')) {{
+                        isMatch = true;
+                    }}
+                }} else {{
+                    // 경로가 없는 경우: 메인 도메인만 (서브링크 제외)
+                    if (href.endsWith(targetDomain + '/') || href.endsWith(targetDomain)) {{
+                        isMatch = true;
+                    }}
+                }}
+
+                if (!isMatch) continue;
+
                 const rect = link.getBoundingClientRect();
                 if (rect.height > 0 && rect.width > 50) {{
                     return {{
@@ -243,28 +274,6 @@ class CDPCalculator:
                         href: link.href,
                         text: link.textContent.trim().substring(0, 50)
                     }};
-                }}
-            }}
-
-            // 2순위: 텍스트에 도메인 포함된 요소
-            const allElements = document.querySelectorAll('*');
-            for (const el of allElements) {{
-                const txt = el.textContent.trim();
-                if (txt.includes('{domain}') && txt.length < 100) {{
-                    const rect = el.getBoundingClientRect();
-                    if (rect.height > 0 && rect.height < 100 && rect.width > 50) {{
-                        return {{
-                            found: true,
-                            y: rect.top + window.scrollY,
-                            screenY: rect.top,
-                            height: rect.height,
-                            width: rect.width,
-                            centerX: rect.left + rect.width / 2,
-                            centerY: rect.top + rect.height / 2,
-                            href: '',
-                            text: txt.substring(0, 50)
-                        }};
-                    }}
                 }}
             }}
 
@@ -881,25 +890,49 @@ class ADBController:
         return {"found": False}
     
     def find_all_elements_with_domain(self, domain, xml=None):
-        """도메인이 포함된 모든 요소 찾기"""
+        """도메인이 포함된 모든 요소 찾기 (정확한 경로 매칭)
+
+        - sidecut.co.kr 지정 시: sidecut.co.kr만 매칭 (서브페이지 제외)
+        - sidecut.co.kr/lessons 지정 시: 정확히 그 경로만 매칭
+        """
         if xml is None:
             xml = self.get_screen_xml(force=True)
         if not xml:
             return []
-        
+
+        # 경로 포함 여부 확인
+        has_path = '/' in domain and not domain.endswith('/')
+        base_domain = domain.split('/')[0]
+
         links = []
-        # text 또는 content-desc에서 도메인 찾기
-        # 더 정확한 패턴: node 전체를 찾고 그 안에서 bounds 추출
-        node_pattern = rf'<node[^>]+(?:text|content-desc)="([^"]*{re.escape(domain)}[^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
-        
+        # text 또는 content-desc에서 베이스 도메인 포함된 요소 찾기
+        node_pattern = rf'<node[^>]+(?:text|content-desc)="([^"]*{re.escape(base_domain)}[^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+
         for match in re.finditer(node_pattern, xml, re.IGNORECASE):
             text_found, x1, y1, x2, y2 = match.groups()
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            
+
             # 유효한 bounds만
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
                 continue
-            
+
+            # 정확한 매칭 체크
+            is_match = False
+            if has_path:
+                # 경로가 지정된 경우: 정확한 경로 포함
+                if domain in text_found:
+                    is_match = True
+            else:
+                # 경로가 없는 경우: 메인 도메인만 (서브링크 제외)
+                # "sidecut.co.kr"은 매칭, "sidecut.co.kr › lessons"나 "sidecut.co.kr/lessons"는 제외
+                # 도메인 뒤에 / 또는 › 또는 > 가 있으면 서브페이지
+                text_after_domain = text_found.split(domain)[-1].strip() if domain in text_found else ""
+                if domain in text_found and not text_after_domain.startswith(('/', '›', '>')):
+                    is_match = True
+
+            if not is_match:
+                continue
+
             links.append({
                 "found": True,
                 "text": text_found,
@@ -907,7 +940,7 @@ class ADBController:
                 "center_x": (x1 + x2) // 2,
                 "center_y": (y1 + y2) // 2
             })
-        
+
         return links
     
     def click_search_button(self):
@@ -1185,8 +1218,11 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
-            # 여유분은 이미 CDP 계산에 포함됨 (margin 설정)
-            # 추가 여유분 없음
+            # 여유분 스크롤 1회 추가 (420~550px)
+            extra_scroll = random.randint(420, 550)
+            log(f"[5단계] 여유분 스크롤: {extra_scroll}px")
+            self.adb.scroll_down(extra_scroll)
+            time.sleep(random.uniform(0.2, 0.4))
 
             # 덤프해서 더보기 찾기
             xml = self.adb.get_screen_xml(force=True)
