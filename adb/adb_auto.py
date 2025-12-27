@@ -378,8 +378,14 @@ class CDPCalculator:
             log("[CDP] 크롬이 --remote-debugging-port=9222 로 실행되었는지 확인")
             return False
 
-    def send(self, method, params=None):
-        """CDP 명령 전송"""
+    def send(self, method, params=None, timeout=30):
+        """CDP 명령 전송
+
+        Args:
+            method: CDP 메서드명
+            params: 파라미터
+            timeout: 응답 대기 시간 (초)
+        """
         if not self.connected:
             return {}
 
@@ -389,17 +395,25 @@ class CDPCalculator:
             msg["params"] = params
         self.ws.send(json.dumps(msg))
 
-        # 최대 100번 응답 대기 (무한 루프 방지)
-        for _ in range(100):
+        # 타임아웃까지 응답 대기
+        start_time = time.time()
+        self.ws.settimeout(1.0)  # recv()당 1초 타임아웃
+
+        while (time.time() - start_time) < timeout:
             try:
                 response = json.loads(self.ws.recv())
-                if response.get("id") == self.msg_id:
+                # 응답 메시지인 경우 (이벤트는 id가 없음)
+                if "id" in response and response["id"] == self.msg_id:
                     return response.get("result", {})
+                # 이벤트 메시지는 무시하고 계속 대기
+            except websocket.WebSocketTimeoutException:
+                # 타임아웃은 정상, 계속 대기
+                continue
             except Exception as e:
                 log(f"[CDP] WebSocket 수신 오류: {e}", "ERROR")
                 return {}
 
-        log("[CDP] 응답 대기 타임아웃", "ERROR")
+        log(f"[CDP] 응답 대기 타임아웃 ({method})", "WARN")
         return {}
 
     def set_viewport(self, screen_width, screen_height):
