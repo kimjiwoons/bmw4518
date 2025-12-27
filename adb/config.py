@@ -21,7 +21,7 @@ PHONES = {
     "1": {
         "name": "테스트폰1",
         "adb_address": "128.14.109.187:20408",
-        "login_code": "9bcfbe",  # GeeLark 로그인 코드
+        "login_code": "82e909",  # GeeLark 로그인 코드
         "browser": "chrome",
         "screen_width": 720,
         "screen_height": 1440,
@@ -80,7 +80,7 @@ NAVER_CONFIG = {
     "search_url": "https://m.search.naver.com/search.naver?query=",
     
     # 검색 실행 모드: 1=엔터, 2=돋보기, 3=랜덤
-    "search_mode": 3,
+    "search_mode": 2,
     
     # 통합 페이지에서 먼저 찾기
     "search_in_total_first": True,
@@ -157,7 +157,7 @@ TOUCH_CONFIG = {
 SCROLL_CONFIG = {
     # 스크롤 거리 (픽셀)
     "distance": 400,
-    "distance_random": 100,
+    "distance_random": 200,
     
     # 스크롤 duration (밀리초)
     "duration_min": 300,
