@@ -366,7 +366,7 @@ class CDPCalculator:
 
         raw_count = scroll_needed / effective_scroll
 
-        # 여유 스크롤 계산
+        # 여유 스크롤 계산 - 도메인 찾기는 여유 최소화
         margin_ratio = CDP_CONFIG.get("margin_scroll_ratio", 0.1)
         margin_min = CDP_CONFIG.get("margin_scroll_min", 1)
         margin_max = CDP_CONFIG.get("margin_scroll_max", 5)
@@ -376,9 +376,11 @@ class CDPCalculator:
 
         final_count = max(0, int(raw_count) + margin)
 
-        self._debug_log(f"스크롤 계산: 요소Y={element_y:.0f}, 타겟위치={target_screen_y:.0f}")
-        self._debug_log(f"필요스크롤={scroll_needed:.0f}px, 보정거리={effective_scroll:.0f}px")
-        self._debug_log(f"기본횟수={raw_count:.1f}, 여유={margin}, 최종={final_count}회")
+        # 디버그 로그 (항상 출력)
+        log(f"[CDP-계산] 요소Y={element_y:.0f}, 뷰포트={self.effective_viewport_height}, 타겟비율={target_position}")
+        log(f"[CDP-계산] 타겟Y={target_screen_y:.0f}, 필요스크롤={scroll_needed:.0f}px")
+        log(f"[CDP-계산] 스크롤거리={scroll_distance}, 보정={calibration}, 유효거리={effective_scroll:.0f}px")
+        log(f"[CDP-계산] 기본횟수={raw_count:.1f}, 여유={margin}, 최종={final_count}회")
 
         return final_count
 
@@ -474,6 +476,10 @@ class CDPCalculator:
                     domain_y = domain_info["y"]
                     result["domain_element_y"] = domain_y
                     result["domain_page"] = page
+
+                    # 디버그: 어떤 href를 찾았는지 출력
+                    log(f"[CDP] 찾은 href: {domain_info.get('href', 'N/A')[:70]}")
+                    log(f"[CDP] 찾은 텍스트: {domain_info.get('text', 'N/A')[:50]}")
 
                     target_pos = CDP_CONFIG.get("domain_target_position", 0.35)
                     result["domain_scroll_count"] = self._calculate_scroll_count(
