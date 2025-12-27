@@ -937,12 +937,6 @@ class ADBController:
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
                 continue
 
-            # 너무 작은 요소 제외 (파비콘 등) - 최소 50x15
-            width = x2 - x1
-            height = y2 - y1
-            if width < 50 or height < 15:
-                continue
-
             # 정확한 매칭 체크
             is_match = False
             if has_path:
