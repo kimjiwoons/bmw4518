@@ -22,12 +22,208 @@ try:
 except ImportError:
     CDP_AVAILABLE = False
 
+import os
+import signal
+import atexit
+
 from config import (
     PHONES, ADB_CONFIG, NAVER_CONFIG,
     SCROLL_CONFIG, TOUCH_CONFIG, TYPING_CONFIG, WAIT_CONFIG,
     COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT,
     CDP_CONFIG, DEBUG_CONFIG
 )
+
+
+# ============================================
+# CDP 스크롤 정보 캐시 (N회마다 갱신)
+# ============================================
+class CDPScrollCache:
+    """CDP 스크롤 정보 캐시 - N회마다 갱신"""
+
+    def __init__(self):
+        self._cache = {}  # {(keyword, domain): scroll_info}
+        self._call_count = {}  # {(keyword, domain): count}
+        self._refresh_interval = CDP_CONFIG.get("cache_refresh_interval", 10)  # config에서 가져옴
+
+    def get(self, keyword, domain):
+        """캐시된 스크롤 정보 반환 (없거나 갱신 필요시 None)"""
+        key = (keyword, domain)
+        count = self._call_count.get(key, 0)
+
+        # 첫 호출이거나 10회 도달시 갱신 필요
+        if count == 0 or count >= self._refresh_interval:
+            self._call_count[key] = 0
+            return None
+
+        return self._cache.get(key)
+
+    def set(self, keyword, domain, scroll_info):
+        """스크롤 정보 캐시"""
+        key = (keyword, domain)
+        self._cache[key] = scroll_info
+        self._call_count[key] = 1
+
+    def increment(self, keyword, domain):
+        """호출 횟수 증가"""
+        key = (keyword, domain)
+        self._call_count[key] = self._call_count.get(key, 0) + 1
+
+    def get_count(self, keyword, domain):
+        """현재 호출 횟수"""
+        return self._call_count.get((keyword, domain), 0)
+
+
+# 전역 캐시 인스턴스
+_scroll_cache = CDPScrollCache()
+
+
+# ============================================
+# Chrome 브라우저 자동 실행 (Headless)
+# ============================================
+class ChromeLauncher:
+    """Chrome 브라우저 자동 실행 관리"""
+
+    def __init__(self, port=9222):
+        self.port = port
+        self.process = None
+        self._find_chrome_path()
+
+    def _find_chrome_path(self):
+        """Chrome 실행 파일 경로 찾기"""
+        # Windows
+        windows_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+        ]
+
+        # Linux
+        linux_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+        ]
+
+        # macOS
+        mac_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+
+        all_paths = windows_paths + linux_paths + mac_paths
+
+        for path in all_paths:
+            if os.path.exists(path):
+                self.chrome_path = path
+                return
+
+        # PATH에서 찾기
+        for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"]:
+            try:
+                result = subprocess.run(["which", cmd], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    self.chrome_path = result.stdout.strip()
+                    return
+            except:
+                pass
+
+        self.chrome_path = None
+
+    def is_running(self):
+        """CDP 포트가 열려있는지 확인"""
+        try:
+            import requests
+            response = requests.get(f"http://localhost:{self.port}/json", timeout=2)
+            return response.status_code == 200
+        except:
+            return False
+
+    def launch(self, headless=True):
+        """Chrome 디버깅 모드로 실행"""
+        if self.is_running():
+            log("[Chrome] 이미 실행 중")
+            return True
+
+        if not self.chrome_path:
+            log("[Chrome] Chrome 실행 파일을 찾을 수 없음", "ERROR")
+            return False
+
+        # Chrome 실행 인자
+        args = [
+            self.chrome_path,
+            f"--remote-debugging-port={self.port}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-popup-blocking",
+            "--disable-translate",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-default-apps",
+            "--mute-audio",
+            "--user-data-dir=" + os.path.join(os.path.expanduser("~"), ".chrome-cdp-debug"),
+        ]
+
+        if headless:
+            args.append("--headless=new")
+
+        try:
+            # 백그라운드로 실행
+            if os.name == 'nt':  # Windows
+                self.process = subprocess.Popen(
+                    args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:  # Linux/Mac
+                self.process = subprocess.Popen(
+                    args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setpgrp
+                )
+
+            # 시작 대기
+            for _ in range(30):  # 최대 3초
+                time.sleep(0.1)
+                if self.is_running():
+                    log(f"[Chrome] 실행 성공 (headless={headless}, port={self.port})")
+                    return True
+
+            log("[Chrome] 실행 타임아웃", "ERROR")
+            return False
+
+        except Exception as e:
+            log(f"[Chrome] 실행 실패: {e}", "ERROR")
+            return False
+
+    def close(self):
+        """Chrome 종료"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+                log("[Chrome] 종료됨")
+            except:
+                try:
+                    self.process.kill()
+                except:
+                    pass
+            self.process = None
+
+
+# 전역 Chrome 인스턴스 (프로그램 종료시 자동 정리)
+_chrome_launcher = None
+
+def _cleanup_chrome():
+    global _chrome_launcher
+    if _chrome_launcher:
+        _chrome_launcher.close()
+
+atexit.register(_cleanup_chrome)
 
 
 def log(message, level="INFO"):
@@ -1738,7 +1934,68 @@ class NaverSearchAutomation:
 
 
 # ============================================
-# 메인
+# CDP 스크롤 정보 가져오기 (자동 브라우저 실행 + 캐시)
+# ============================================
+def get_cdp_scroll_info(keyword, domain, screen_width, screen_height, force_refresh=False):
+    """CDP 스크롤 정보 가져오기
+
+    - Chrome 자동 실행 (headless)
+    - 10회마다 스크롤 정보 갱신
+    - force_refresh=True면 강제 갱신
+
+    Returns:
+        dict: 스크롤 정보 또는 None
+    """
+    global _chrome_launcher, _scroll_cache
+
+    if not CDP_AVAILABLE:
+        log("[CDP] requests/websocket 모듈 없음")
+        return None
+
+    # 캐시 확인 (force_refresh가 아닐 때만)
+    if not force_refresh:
+        cached = _scroll_cache.get(keyword, domain)
+        if cached:
+            count = _scroll_cache.get_count(keyword, domain)
+            log(f"[CDP] 캐시 사용 ({count}/10회)")
+            _scroll_cache.increment(keyword, domain)
+            return cached
+
+    log(f"[CDP] 스크롤 정보 갱신 (force={force_refresh})")
+
+    # Chrome 자동 실행
+    if _chrome_launcher is None:
+        _chrome_launcher = ChromeLauncher(port=CDP_CONFIG.get("port", 9222))
+
+    if not _chrome_launcher.is_running():
+        headless = CDP_CONFIG.get("headless", True)
+        log(f"[CDP] Chrome 자동 실행 (headless={headless})...")
+        if not _chrome_launcher.launch(headless=headless):
+            log("[CDP] Chrome 실행 실패", "ERROR")
+            return None
+
+    # CDP 연결 및 계산
+    cdp = CDPCalculator(port=CDP_CONFIG.get("port", 9222))
+
+    if not cdp.connect():
+        log("[CDP] 연결 실패")
+        return None
+
+    try:
+        cdp_info = cdp.calculate_scroll_info(keyword, domain, screen_width, screen_height)
+
+        if cdp_info and cdp_info.get("calculated"):
+            # 캐시에 저장
+            _scroll_cache.set(keyword, domain, cdp_info)
+            log(f"[CDP] 스크롤 정보 캐시됨 (다음 9회 재사용)")
+        return cdp_info
+
+    finally:
+        cdp.close()
+
+
+# ============================================
+# 메인 (무한 재시도 루프 포함)
 # ============================================
 def main():
     if len(sys.argv) < 3:
@@ -1751,14 +2008,14 @@ def main():
         print("[폰번호] config.py PHONES 키 (기본값: 1)")
         print("[마지막] 0=중간, 1=마지막 키워드")
         return
-    
+
     keyword = sys.argv[1]
     domain = sys.argv[2]
-    
+
     # 검색 모드
     search_in_total = True
     go_to_more = True
-    
+
     if len(sys.argv) >= 4:
         mode = sys.argv[3].lower()
         if mode == "total":
@@ -1770,77 +2027,97 @@ def main():
         else:
             search_in_total = True
             go_to_more = True
-    
+
     phone_key = sys.argv[4] if len(sys.argv) >= 5 else "1"
     is_last = sys.argv[5] in ["1", "true", "last"] if len(sys.argv) >= 6 else False
-    
+
     if phone_key not in PHONES:
         print(f"[오류] 폰 '{phone_key}' 없음")
         return
-    
+
     phone_config = PHONES[phone_key]
-    
-    print("=" * 60)
-    print("[ADB + CDP 통합 네이버 검색 v3]")
-    print(f"[검색어] {keyword}")
-    print(f"[도메인] {domain}")
-    print(f"[모드] 통합:{search_in_total}, 더보기:{go_to_more}")
-    print(f"[폰] {phone_config.get('name', phone_key)}")
-    print(f"[마지막] {'YES' if is_last else 'NO'}")
-    print("=" * 60)
-    
-    # ADB 연결
-    adb = ADBController(phone_config)
-    if not adb.connect():
-        return
-    
-    # CDP 계산 (선택적 - 크롬 디버깅 모드 필요)
-    cdp_info = None
-    cdp = None
-    
-    if go_to_more and CDP_AVAILABLE:
-        print("\n[CDP 스크롤 계산]")
-        cdp = CDPCalculator(port=9222)
-        
-        if cdp.connect():
-            cdp_info = cdp.calculate_scroll_info(
-                keyword, domain,
-                adb.screen_width, adb.screen_height
-            )
-            cdp.close()
-        else:
-            print("[CDP] 연결 실패, 기존 방식으로 진행")
-    
-    print("")
-    
-    # 자동화 실행
-    automation = NaverSearchAutomation(adb, cdp_info)
-    max_retry = NAVER_CONFIG.get("max_full_retry", 2)
-    
-    for retry in range(max_retry + 1):
-        if retry > 0:
-            log(f"\n[전체 재시도 {retry}/{max_retry}]")
-        
-        result = automation.run(keyword, domain, search_in_total, go_to_more, is_last)
-        
-        if result == "DONE":
-            print("\n" + "=" * 60)
-            print("[완료] 성공!")
-            print("=" * 60)
-            return
-        elif result == "NOTFOUND":
-            print("\n" + "=" * 60)
-            print(f"[결과] {domain} 못 찾음")
-            print("=" * 60)
-            return
-        elif result == "RETRY" and retry < max_retry:
+
+    # ============================================
+    # 무한 재시도 루프 (브라우저 실행 실패시 처음부터)
+    # ============================================
+    full_restart_count = 0
+
+    while True:  # 무한 루프
+        full_restart_count += 1
+
+        print("\n" + "=" * 60)
+        print(f"[ADB + CDP 통합 네이버 검색 v4] (시도 #{full_restart_count})")
+        print(f"[검색어] {keyword}")
+        print(f"[도메인] {domain}")
+        print(f"[모드] 통합:{search_in_total}, 더보기:{go_to_more}")
+        print(f"[폰] {phone_config.get('name', phone_key)}")
+        print(f"[마지막] {'YES' if is_last else 'NO'}")
+        print("=" * 60)
+
+        # ADB 연결
+        adb = ADBController(phone_config)
+        if not adb.connect():
+            log(f"[무한재시도] ADB 연결 실패, 5초 후 재시도... (#{full_restart_count})")
+            time.sleep(5)
             continue
-        else:
-            break
-    
-    print("\n" + "=" * 60)
-    print("[실패]")
-    print("=" * 60)
+
+        # CDP 계산 (자동 브라우저 실행 + 캐시)
+        cdp_info = None
+
+        if go_to_more and CDP_AVAILABLE:
+            # force_refresh: 전체 재시작시에만 강제 갱신
+            force_refresh = (full_restart_count > 1)
+            cdp_info = get_cdp_scroll_info(
+                keyword, domain,
+                adb.screen_width, adb.screen_height,
+                force_refresh=force_refresh
+            )
+
+        print("")
+
+        # 자동화 실행
+        automation = NaverSearchAutomation(adb, cdp_info)
+        max_retry = NAVER_CONFIG.get("max_full_retry", 2)
+
+        need_full_restart = False
+
+        for retry in range(max_retry + 1):
+            if retry > 0:
+                log(f"\n[전체 재시도 {retry}/{max_retry}]")
+
+            result = automation.run(keyword, domain, search_in_total, go_to_more, is_last)
+
+            if result == "DONE":
+                print("\n" + "=" * 60)
+                print("[완료] 성공!")
+                print("=" * 60)
+                return  # 성공 → 종료
+
+            elif result == "NOTFOUND":
+                print("\n" + "=" * 60)
+                print(f"[결과] {domain} 못 찾음")
+                print("=" * 60)
+                return  # 못 찾음 → 종료
+
+            elif result == "RETRY" and retry < max_retry:
+                continue
+
+            elif result == "ERROR" or result == "RETRY":
+                # 재시도 횟수 소진 또는 에러 → 처음부터 다시
+                need_full_restart = True
+                break
+
+        if need_full_restart:
+            log(f"\n[무한재시도] 전체 프로세스 재시작... (#{full_restart_count})")
+            log("[무한재시도] CDP 정보 갱신 + ADB 재연결")
+            time.sleep(3)
+            continue
+
+        # 여기까지 오면 알 수 없는 상태
+        print("\n" + "=" * 60)
+        print("[실패] 알 수 없는 오류")
+        print("=" * 60)
+        return
 
 
 if __name__ == "__main__":
