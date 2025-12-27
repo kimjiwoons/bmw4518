@@ -35,42 +35,87 @@ from config import (
 
 
 # ============================================
-# CDP 스크롤 정보 캐시 (N회마다 갱신)
+# CDP 스크롤 정보 캐시 (N회마다 갱신, 파일 저장)
 # ============================================
 class CDPScrollCache:
-    """CDP 스크롤 정보 캐시 - N회마다 갱신"""
+    """CDP 스크롤 정보 캐시 - N회마다 갱신, 파일로 영구 저장"""
 
-    def __init__(self):
-        self._cache = {}  # {(keyword, domain): scroll_info}
-        self._call_count = {}  # {(keyword, domain): count}
-        self._refresh_interval = CDP_CONFIG.get("cache_refresh_interval", 10)  # config에서 가져옴
+    def __init__(self, cache_file=None):
+        self._refresh_interval = CDP_CONFIG.get("cache_refresh_interval", 10)
+
+        # 캐시 파일 경로 설정
+        if cache_file:
+            self._cache_file = cache_file
+        else:
+            # 기본 경로: 스크립트 위치에 cdp_scroll_cache.json
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            self._cache_file = os.path.join(script_dir, "cdp_scroll_cache.json")
+
+        # 파일에서 캐시 로드
+        self._cache = {}  # {"keyword|domain": scroll_info}
+        self._call_count = {}  # {"keyword|domain": count}
+        self._load_from_file()
+
+    def _make_key(self, keyword, domain):
+        """키 생성 (JSON 호환)"""
+        return f"{keyword}|{domain}"
+
+    def _load_from_file(self):
+        """파일에서 캐시 로드"""
+        try:
+            if os.path.exists(self._cache_file):
+                with open(self._cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._cache = data.get("cache", {})
+                    self._call_count = data.get("call_count", {})
+                    log(f"[캐시] 파일에서 로드: {len(self._cache)}개 항목")
+        except Exception as e:
+            log(f"[캐시] 파일 로드 실패: {e}", "ERROR")
+            self._cache = {}
+            self._call_count = {}
+
+    def _save_to_file(self):
+        """파일에 캐시 저장"""
+        try:
+            data = {
+                "cache": self._cache,
+                "call_count": self._call_count
+            }
+            with open(self._cache_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log(f"[캐시] 파일 저장 실패: {e}", "ERROR")
 
     def get(self, keyword, domain):
         """캐시된 스크롤 정보 반환 (없거나 갱신 필요시 None)"""
-        key = (keyword, domain)
+        key = self._make_key(keyword, domain)
         count = self._call_count.get(key, 0)
 
-        # 첫 호출이거나 10회 도달시 갱신 필요
+        # 첫 호출이거나 N회 도달시 갱신 필요
         if count == 0 or count >= self._refresh_interval:
             self._call_count[key] = 0
+            self._save_to_file()
             return None
 
         return self._cache.get(key)
 
     def set(self, keyword, domain, scroll_info):
         """스크롤 정보 캐시"""
-        key = (keyword, domain)
+        key = self._make_key(keyword, domain)
         self._cache[key] = scroll_info
         self._call_count[key] = 1
+        self._save_to_file()
 
     def increment(self, keyword, domain):
         """호출 횟수 증가"""
-        key = (keyword, domain)
+        key = self._make_key(keyword, domain)
         self._call_count[key] = self._call_count.get(key, 0) + 1
+        self._save_to_file()
 
     def get_count(self, keyword, domain):
         """현재 호출 횟수"""
-        return self._call_count.get((keyword, domain), 0)
+        key = self._make_key(keyword, domain)
+        return self._call_count.get(key, 0)
 
 
 # 전역 캐시 인스턴스
@@ -157,6 +202,7 @@ class ChromeLauncher:
         args = [
             self.chrome_path,
             f"--remote-debugging-port={self.port}",
+            "--remote-allow-origins=*",  # WebSocket 403 에러 방지
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
@@ -230,7 +276,16 @@ atexit.register(_cleanup_chrome)
 
 
 def log(message, level="INFO"):
+    """로그 출력 (모든 레벨 콘솔 출력)"""
+    import traceback as tb
     print(f"[{level}] {message}")
+
+    # ERROR 레벨일 때 스택 트레이스도 출력
+    if level == "ERROR":
+        # 현재 예외가 있으면 출력
+        import sys
+        if sys.exc_info()[0] is not None:
+            tb.print_exc()
 
 
 def random_delay(min_sec, max_sec):
@@ -288,7 +343,7 @@ class CDPCalculator:
             return True
 
         except Exception as e:
-            log(f"[CDP] 연결 실패: {e}")
+            log(f"[CDP] 연결 실패: {e}", "ERROR")
             log("[CDP] 크롬이 --remote-debugging-port=9222 로 실행되었는지 확인")
             return False
 
@@ -2089,7 +2144,10 @@ def main():
         # 브라우저 데이터 초기화 (새 프로필)
         if ADB_CONFIG.get("clear_browser_data", False):
             package = ADB_CONFIG.get("browser_package", "com.android.chrome")
-            adb.clear_browser_data(package)
+            if not adb.clear_browser_data(package):
+                log("[무한재시도] 브라우저 초기화 실패, 처음부터 재시도...", "ERROR")
+                time.sleep(3)
+                continue  # 처음부터 다시 (ADB 재연결부터)
 
         # CDP 계산 (자동 브라우저 실행 + 캐시)
         cdp_info = None
@@ -2102,6 +2160,12 @@ def main():
                 adb.screen_width, adb.screen_height,
                 force_refresh=force_refresh
             )
+
+            # CDP 계산 실패시 재시도
+            if cdp_info is None or not cdp_info.get("calculated"):
+                log("[무한재시도] CDP 스크롤 계산 실패, 처음부터 재시도...", "ERROR")
+                time.sleep(3)
+                continue
 
         print("")
 
