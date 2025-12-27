@@ -220,10 +220,11 @@ class CDPCalculator:
         return result
 
     def get_domain_info(self, domain):
-        """도메인 링크 찾기 (정확한 경로 매칭 버전)
+        """도메인 링크 찾기 (cdp_touch_scroll_v4.py 방식)
 
         - sidecut.co.kr 지정 시: sidecut.co.kr만 매칭 (서브페이지 제외)
         - sidecut.co.kr/lessons 지정 시: 정확히 그 경로만 매칭
+        - sublink 제외 (data-heatmap-target=".sublink")
 
         Returns:
             dict: {found, y, screenY, height, href, text}
@@ -245,6 +246,10 @@ class CDPCalculator:
                 const href = link.getAttribute('href');
                 if (!href) continue;
 
+                // sublink 제외 (서브링크는 위치 겹침 문제)
+                const heatmapTarget = link.getAttribute('data-heatmap-target');
+                if (heatmapTarget === '.sublink') continue;
+
                 // 정확한 매칭 체크
                 let isMatch = false;
                 if (hasPath) {{
@@ -261,6 +266,21 @@ class CDPCalculator:
 
                 if (!isMatch) continue;
 
+                // 웹사이트 영역 체크 (type-web 클래스 확인)
+                let isWebArea = false;
+                let parent = link.parentElement;
+                while (parent) {{
+                    if (parent.classList && parent.classList.contains('type-web')) {{
+                        isWebArea = true;
+                        break;
+                    }}
+                    if (parent.getAttribute && parent.getAttribute('data-sds-comp') === 'Profile') {{
+                        isWebArea = true;
+                        break;
+                    }}
+                    parent = parent.parentElement;
+                }}
+
                 const rect = link.getBoundingClientRect();
                 if (rect.height > 0 && rect.width > 50) {{
                     return {{
@@ -272,7 +292,8 @@ class CDPCalculator:
                         centerX: rect.left + rect.width / 2,
                         centerY: rect.top + rect.height / 2,
                         href: link.href,
-                        text: link.textContent.trim().substring(0, 50)
+                        text: link.textContent.trim().substring(0, 50),
+                        isWebArea: isWebArea
                     }};
                 }}
             }}
@@ -916,10 +937,10 @@ class ADBController:
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
                 continue
 
-            # 너무 작은 요소 제외 (파비콘 등)
+            # 너무 작은 요소 제외 (파비콘 등) - 최소 50x15
             width = x2 - x1
             height = y2 - y1
-            if width < 80 or height < 20:
+            if width < 50 or height < 15:
                 continue
 
             # 정확한 매칭 체크
