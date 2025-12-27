@@ -23,9 +23,10 @@ except ImportError:
     CDP_AVAILABLE = False
 
 from config import (
-    PHONES, ADB_CONFIG, NAVER_CONFIG, 
+    PHONES, ADB_CONFIG, NAVER_CONFIG,
     SCROLL_CONFIG, TOUCH_CONFIG, TYPING_CONFIG, WAIT_CONFIG,
-    COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT
+    COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT,
+    CDP_CONFIG, DEBUG_CONFIG
 )
 
 
@@ -40,96 +41,120 @@ def random_delay(min_sec, max_sec):
 
 
 # ============================================
-# CDP 스크롤 계산기 (선택적 사용)
+# CDP 스크롤 계산기 (정확도 향상 버전)
 # ============================================
 class CDPCalculator:
-    """PC 크롬에서 스크롤 위치를 미리 계산"""
-    
-    def __init__(self, port=9222):
-        self.port = port
+    """PC 크롬에서 스크롤 위치를 미리 계산 (모바일 뷰포트 정확히 반영)"""
+
+    def __init__(self, port=None):
+        self.port = port or CDP_CONFIG.get("port", 9222)
         self.ws = None
         self.msg_id = 0
         self.connected = False
-    
+        self.debug = DEBUG_CONFIG.get("cdp_debug", False)
+
+        # 뷰포트 정보 (계산 후 저장)
+        self.screen_width = 0
+        self.screen_height = 0
+        self.effective_viewport_height = 0  # 실제 스크롤 가능 영역
+
+    def _debug_log(self, message):
+        """디버그 로그"""
+        if self.debug:
+            log(f"[CDP-DEBUG] {message}")
+
     def connect(self):
         """CDP 연결"""
         if not CDP_AVAILABLE:
             log("[CDP] requests/websocket 모듈 없음, CDP 계산 비활성화")
             return False
-        
+
         try:
             response = requests.get(f"http://localhost:{self.port}/json", timeout=3)
             tabs = response.json()
-            
+
             ws_url = None
             for tab in tabs:
                 if tab.get("type") == "page":
                     ws_url = tab["webSocketDebuggerUrl"]
                     break
-            
+
             if not ws_url:
                 log("[CDP] 탭을 찾을 수 없음")
                 return False
-            
+
             self.ws = websocket.create_connection(ws_url, timeout=5)
             self.connected = True
             log("[CDP] 연결 성공!")
             return True
-            
+
         except Exception as e:
             log(f"[CDP] 연결 실패: {e}")
             log("[CDP] 크롬이 --remote-debugging-port=9222 로 실행되었는지 확인")
             return False
-    
+
     def send(self, method, params=None):
         """CDP 명령 전송"""
         if not self.connected:
             return {}
-        
+
         self.msg_id += 1
         msg = {"id": self.msg_id, "method": method}
         if params:
             msg["params"] = params
         self.ws.send(json.dumps(msg))
-        
+
         while True:
             response = json.loads(self.ws.recv())
             if response.get("id") == self.msg_id:
                 return response.get("result", {})
-    
-    def set_viewport(self, width, height):
-        """뷰포트 크기 설정 (모바일과 동일하게)"""
+
+    def set_viewport(self, screen_width, screen_height):
+        """뷰포트 크기 설정 (실제 모바일 브라우저 환경 반영)"""
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+
+        # 실제 뷰포트 계산 (상태바, 주소창 제외)
+        status_bar = CDP_CONFIG.get("status_bar_height", 50)
+        address_bar = CDP_CONFIG.get("address_bar_height", 56)
+        nav_bar = CDP_CONFIG.get("nav_bar_height", 0)
+
+        # 실제 브라우저 뷰포트 높이
+        self.effective_viewport_height = screen_height - status_bar - address_bar - nav_bar
+
+        self._debug_log(f"화면: {screen_width}x{screen_height}")
+        self._debug_log(f"상태바: {status_bar}, 주소창: {address_bar}, 네비바: {nav_bar}")
+        self._debug_log(f"실제 뷰포트: {self.effective_viewport_height}px")
+
         # Page, Network 도메인 활성화
         self.send("Page.enable", {})
         self.send("Network.enable", {})
-        
+
         # UA 모바일로 설정
         self.send("Emulation.setUserAgentOverride", {
             "userAgent": "Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
             "acceptLanguage": "ko-KR,ko;q=0.9",
             "platform": "Linux armv81"
         })
-        
-        # 모바일과 동일한 뷰포트 설정
+
+        # CDP 뷰포트 = 실제 브라우저 뷰포트와 동일하게 설정
         self.send("Emulation.setDeviceMetricsOverride", {
-            "width": width,
-            "height": height,
+            "width": screen_width,
+            "height": self.effective_viewport_height,
             "deviceScaleFactor": 2,
             "mobile": True,
-            "screenWidth": width,
-            "screenHeight": height
+            "screenWidth": screen_width,
+            "screenHeight": screen_height
         })
-        
-        self.target_width = width
-        self.target_height = height
-        
-        log(f"[CDP] 뷰포트: {width}x{height} (모바일과 동일)")
-    
+
+        log(f"[CDP] 뷰포트 설정: {screen_width}x{self.effective_viewport_height} (실제 브라우저 영역)")
+
     def navigate(self, url):
         """페이지 이동"""
+        wait_time = CDP_CONFIG.get("page_load_wait", 3.0)
         self.send("Page.navigate", {"url": url})
-        time.sleep(3)
-    
+        time.sleep(wait_time)
+
     def evaluate(self, expression):
         """JS 실행"""
         result = self.send("Runtime.evaluate", {
@@ -137,25 +162,51 @@ class CDPCalculator:
             "returnByValue": True
         })
         return result.get("result", {}).get("value")
-    
+
     def get_viewport_height(self):
-        """뷰포트 높이"""
+        """실제 뷰포트 높이 (JS에서)"""
         return self.evaluate("window.innerHeight") or 0
-    
-    def get_element_y(self, text):
-        """텍스트로 요소 Y 좌표 찾기"""
+
+    def get_scroll_height(self):
+        """전체 문서 높이"""
+        return self.evaluate("document.documentElement.scrollHeight") or 0
+
+    def get_scroll_position(self):
+        """현재 스크롤 위치"""
+        return self.evaluate("window.scrollY") or 0
+
+    def get_element_info(self, text, exact_match=False):
+        """텍스트로 요소 찾기 (개선된 버전)
+
+        Returns:
+            dict: {found, y, screenY, height, clickable, elementType}
+        """
+        match_condition = f"txt === '{text}'" if exact_match else f"txt.includes('{text}') && txt.length < 50"
+
         js = f"""
         (function() {{
             const elements = [...document.querySelectorAll('*')];
             for (const el of elements) {{
                 const txt = el.textContent.trim();
-                if (txt.includes('{text}') && txt.length < 30) {{
+                if ({match_condition}) {{
                     const rect = el.getBoundingClientRect();
-                    if (rect.height > 0 && rect.height < 100) {{
+                    if (rect.height > 0 && rect.height < 150 && rect.width > 50) {{
+                        // 클릭 가능한 요소인지 확인
+                        const isClickable = el.tagName === 'A' || el.tagName === 'BUTTON' ||
+                                          el.onclick !== null ||
+                                          window.getComputedStyle(el).cursor === 'pointer';
+
                         return {{
                             found: true,
                             y: rect.top + window.scrollY,
-                            screenY: rect.top
+                            screenY: rect.top,
+                            height: rect.height,
+                            width: rect.width,
+                            centerX: rect.left + rect.width / 2,
+                            centerY: rect.top + rect.height / 2,
+                            clickable: isClickable,
+                            elementType: el.tagName,
+                            text: txt.substring(0, 50)
                         }};
                     }}
                 }}
@@ -163,33 +214,73 @@ class CDPCalculator:
             return {{ found: false }};
         }})()
         """
-        return self.evaluate(js)
-    
-    def get_domain_y(self, domain):
-        """도메인 링크 Y 좌표 찾기"""
+        result = self.evaluate(js)
+        if result and result.get("found"):
+            self._debug_log(f"요소 발견: '{result.get('text', '')[:30]}' Y={result['y']:.0f}")
+        return result
+
+    def get_domain_info(self, domain):
+        """도메인 링크 찾기 (개선된 버전)
+
+        Returns:
+            dict: {found, y, screenY, height, href, text}
+        """
         js = f"""
         (function() {{
+            // 1순위: href에 도메인 포함된 링크
             const links = document.querySelectorAll('a[href*="{domain}"]');
             for (const link of links) {{
                 const rect = link.getBoundingClientRect();
-                if (rect.height > 0) {{
+                if (rect.height > 0 && rect.width > 50) {{
                     return {{
                         found: true,
                         y: rect.top + window.scrollY,
-                        screenY: rect.top
+                        screenY: rect.top,
+                        height: rect.height,
+                        width: rect.width,
+                        centerX: rect.left + rect.width / 2,
+                        centerY: rect.top + rect.height / 2,
+                        href: link.href,
+                        text: link.textContent.trim().substring(0, 50)
                     }};
                 }}
             }}
+
+            // 2순위: 텍스트에 도메인 포함된 요소
+            const allElements = document.querySelectorAll('*');
+            for (const el of allElements) {{
+                const txt = el.textContent.trim();
+                if (txt.includes('{domain}') && txt.length < 100) {{
+                    const rect = el.getBoundingClientRect();
+                    if (rect.height > 0 && rect.height < 100 && rect.width > 50) {{
+                        return {{
+                            found: true,
+                            y: rect.top + window.scrollY,
+                            screenY: rect.top,
+                            height: rect.height,
+                            width: rect.width,
+                            centerX: rect.left + rect.width / 2,
+                            centerY: rect.top + rect.height / 2,
+                            href: '',
+                            text: txt.substring(0, 50)
+                        }};
+                    }}
+                }}
+            }}
+
             return {{ found: false }};
         }})()
         """
-        return self.evaluate(js)
-    
+        result = self.evaluate(js)
+        if result and result.get("found"):
+            self._debug_log(f"도메인 발견: '{result.get('text', '')[:30]}' Y={result['y']:.0f}")
+        return result
+
     def scroll_to(self, y):
         """스크롤 이동"""
         self.evaluate(f"window.scrollTo(0, {y})")
-        time.sleep(0.5)
-    
+        time.sleep(CDP_CONFIG.get("after_scroll_wait", 0.3))
+
     def click(self, x, y):
         """터치 클릭"""
         self.send("Input.dispatchTouchEvent", {
@@ -201,117 +292,173 @@ class CDPCalculator:
             "type": "touchEnd",
             "touchPoints": []
         })
-    
-    def click_element_by_text(self, text):
-        """텍스트로 요소 찾아서 클릭"""
-        js = f"""
-        (function() {{
-            const elements = [...document.querySelectorAll('*')];
-            for (const el of elements) {{
-                const txt = el.textContent.trim();
-                if (txt === '{text}' || (txt.includes('{text}') && txt.length < 30)) {{
-                    const rect = el.getBoundingClientRect();
-                    if (rect.height > 0 && rect.height < 100) {{
-                        return {{
-                            found: true,
-                            x: rect.left + rect.width / 2,
-                            y: rect.top + rect.height / 2
-                        }};
-                    }}
-                }}
-            }}
-            return {{ found: false }};
-        }})()
+
+    def _calculate_scroll_count(self, element_y, target_position, scroll_distance):
+        """스크롤 횟수 계산 (정확도 향상)
+
+        Args:
+            element_y: 요소의 절대 Y 좌표 (문서 기준)
+            target_position: 화면에서 요소가 위치할 비율 (0.0~1.0)
+            scroll_distance: ADB 스크롤 1회 거리 (픽셀)
+
+        Returns:
+            int: 필요한 스크롤 횟수
         """
-        result = self.evaluate(js)
-        
-        if result and result.get("found"):
-            self.click(result["x"], result["y"])
-            return True
-        return False
-    
+        # 타겟 위치 (화면에서 몇 번째 픽셀에 요소가 올지)
+        target_screen_y = self.effective_viewport_height * target_position
+
+        # 필요한 스크롤 양 (픽셀)
+        scroll_needed = element_y - target_screen_y
+
+        # 스크롤 보정 계수 적용
+        calibration = CDP_CONFIG.get("scroll_calibration", 0.85)
+        effective_scroll = scroll_distance * calibration
+
+        # 스크롤 횟수 계산
+        if effective_scroll <= 0:
+            return 0
+
+        raw_count = scroll_needed / effective_scroll
+
+        # 여유 스크롤 계산
+        margin_ratio = CDP_CONFIG.get("margin_scroll_ratio", 0.1)
+        margin_min = CDP_CONFIG.get("margin_scroll_min", 1)
+        margin_max = CDP_CONFIG.get("margin_scroll_max", 5)
+
+        margin = int(raw_count * margin_ratio)
+        margin = max(margin_min, min(margin, margin_max))
+
+        final_count = max(0, int(raw_count) + margin)
+
+        self._debug_log(f"스크롤 계산: 요소Y={element_y:.0f}, 타겟위치={target_screen_y:.0f}")
+        self._debug_log(f"필요스크롤={scroll_needed:.0f}px, 보정거리={effective_scroll:.0f}px")
+        self._debug_log(f"기본횟수={raw_count:.1f}, 여유={margin}, 최종={final_count}회")
+
+        return final_count
+
     def calculate_scroll_info(self, keyword, domain, screen_width, screen_height):
-        """검색어로 스크롤 정보 미리 계산 (모바일과 동일 뷰포트)"""
+        """검색어로 스크롤 정보 미리 계산 (정확도 향상 버전)
+
+        Returns:
+            dict: {
+                more_scroll_count: "검색결과 더보기"까지 스크롤 횟수,
+                more_element_y: "검색결과 더보기" Y좌표,
+                domain_scroll_count: 도메인까지 스크롤 횟수 (-1이면 못 찾음),
+                domain_element_y: 도메인 Y좌표,
+                domain_page: 도메인이 있는 페이지 번호,
+                viewport_height: 실제 뷰포트 높이,
+                scroll_distance: ADB 스크롤 1회 거리,
+                calculated: 계산 성공 여부
+            }
+        """
         log("[CDP] 스크롤 위치 계산 시작...")
-        
+
         result = {
             "more_scroll_count": 0,
+            "more_element_y": 0,
             "domain_scroll_count": -1,
+            "domain_element_y": 0,
+            "domain_page": 1,
+            "viewport_height": 0,
+            "scroll_distance": 0,
             "calculated": False
         }
-        
+
         if not self.connected:
+            log("[CDP] 연결 안 됨")
             return result
-        
+
         try:
-            # 모바일과 동일한 뷰포트 설정
+            # 뷰포트 설정
             self.set_viewport(screen_width, screen_height)
-            
-            # 1. 통합 검색 페이지
-            search_url = f"https://m.search.naver.com/search.naver?query={keyword}"
-            self.navigate(search_url)
-            time.sleep(3)
-            
-            # 실제 뷰포트 확인
-            cdp_viewport_h = self.get_viewport_height()
-            log(f"[CDP] 실제 뷰포트: {cdp_viewport_h}px")
-            
-            # ADB 스크롤 1회 거리
+            result["viewport_height"] = self.effective_viewport_height
+
+            # ADB 스크롤 거리
             scroll_distance = SCROLL_CONFIG.get("distance", 400)
-            
-            # "검색결과 더보기" 위치 계산
-            more_info = self.get_element_y("검색결과 더보기")
-            
-            if more_info and more_info.get("found"):
-                more_y = more_info["y"]
-                # 화면 중앙까지 스크롤 (비율 계산 없이 직접 사용)
-                scroll_needed = more_y - (screen_height * 0.5)
-                result["more_scroll_count"] = max(1, int(scroll_needed / scroll_distance) + 3)
-                
-                log(f"[CDP] '검색결과 더보기' Y={more_y:.0f}")
-                log(f"[CDP] 스크롤 필요={scroll_needed:.0f}px, 횟수={result['more_scroll_count']}번")
-            else:
-                log("[CDP] '검색결과 더보기' 못 찾음, 기본값 사용")
-                result["more_scroll_count"] = 40
-            
-            # 2. 더보기 페이지 URL로 직접 이동
+            result["scroll_distance"] = scroll_distance
+
+            # 1. 통합 검색 페이지 이동
             import urllib.parse
             encoded_keyword = urllib.parse.quote(keyword)
+            search_url = f"https://m.search.naver.com/search.naver?query={encoded_keyword}"
+
+            log(f"[CDP] 통합 페이지 이동: {keyword}")
+            self.navigate(search_url)
+
+            # CDP 뷰포트 확인
+            cdp_viewport = self.get_viewport_height()
+            doc_height = self.get_scroll_height()
+            self._debug_log(f"CDP 뷰포트: {cdp_viewport}px, 문서높이: {doc_height}px")
+
+            # "검색결과 더보기" 위치 계산
+            more_info = self.get_element_info("검색결과 더보기")
+
+            if more_info and more_info.get("found"):
+                more_y = more_info["y"]
+                result["more_element_y"] = more_y
+
+                target_pos = CDP_CONFIG.get("more_target_position", 0.4)
+                result["more_scroll_count"] = self._calculate_scroll_count(
+                    more_y, target_pos, scroll_distance
+                )
+
+                log(f"[CDP] '검색결과 더보기' Y={more_y:.0f}, 스크롤={result['more_scroll_count']}회")
+            else:
+                log("[CDP] '검색결과 더보기' 못 찾음, 기본값 사용")
+                result["more_scroll_count"] = 30
+
+            # 2. 더보기 페이지에서 도메인 찾기
             more_page_url = f"https://m.search.naver.com/search.naver?where=m_web&query={encoded_keyword}&sm=mtb_pge&start=1"
-            
+
             log(f"[CDP] 더보기 페이지 이동...")
             self.navigate(more_page_url)
-            time.sleep(3)
-            
-            # 도메인 위치 계산
-            domain_info = self.get_domain_y(domain)
-            
-            if domain_info and domain_info.get("found"):
-                domain_y = domain_info["y"]
-                scroll_needed = domain_y - (screen_height * 0.5)
-                result["domain_scroll_count"] = max(0, int(scroll_needed / scroll_distance) + 3)
-                
-                log(f"[CDP] '{domain}' Y={domain_y:.0f}")
-                log(f"[CDP] 스크롤 필요={scroll_needed:.0f}px, 횟수={result['domain_scroll_count']}번")
+
+            # 도메인 위치 계산 (최대 5페이지까지 탐색)
+            max_pages = 5
+            for page in range(1, max_pages + 1):
+                if page > 1:
+                    # 다음 페이지로 이동
+                    page_url = f"https://m.search.naver.com/search.naver?where=m_web&query={encoded_keyword}&sm=mtb_pge&start={1 + (page-1)*10}"
+                    self._debug_log(f"페이지 {page} 이동...")
+                    self.navigate(page_url)
+
+                domain_info = self.get_domain_info(domain)
+
+                if domain_info and domain_info.get("found"):
+                    domain_y = domain_info["y"]
+                    result["domain_element_y"] = domain_y
+                    result["domain_page"] = page
+
+                    target_pos = CDP_CONFIG.get("domain_target_position", 0.35)
+                    result["domain_scroll_count"] = self._calculate_scroll_count(
+                        domain_y, target_pos, scroll_distance
+                    )
+
+                    log(f"[CDP] '{domain}' 발견! 페이지={page}, Y={domain_y:.0f}, 스크롤={result['domain_scroll_count']}회")
+                    break
             else:
-                log(f"[CDP] '{domain}' 1페이지에 없음, 스크롤하며 찾기")
+                log(f"[CDP] '{domain}' {max_pages}페이지 내 못 찾음")
                 result["domain_scroll_count"] = -1
-            
+
             result["calculated"] = True
             log("[CDP] 계산 완료!")
-            
+
         except Exception as e:
             log(f"[CDP] 계산 오류: {e}")
-        
+            import traceback
+            self._debug_log(traceback.format_exc())
+
         return result
-    
+
     def close(self):
+        """연결 종료"""
         if self.ws:
             try:
                 self.ws.close()
             except:
                 pass
             self.connected = False
+            log("[CDP] 연결 종료")
 
 
 class ADBController:
@@ -1257,9 +1404,7 @@ class NaverSearchAutomation:
                 log(f"[7단계] 스크롤 {scroll_count}/{max_scrolls}...")
         
         return False
-        
-        return False
-    
+
     def _click_page_number(self, page_num):
         """페이지 번호 버튼 클릭 (CDP 동일)"""
         max_scroll = 15
