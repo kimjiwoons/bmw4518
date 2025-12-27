@@ -937,6 +937,15 @@ class ADBController:
             if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
                 continue
 
+            # URL 인코딩된 텍스트 제외 (파비콘, 이미지 URL 등)
+            # sunny?src=https%3A%2F%2Fsidecut.co.kr%2Ffavicon 같은 것
+            if '%2F' in text_found or '%3A' in text_found or 'sunny?' in text_found.lower():
+                continue
+
+            # http로 시작하는 URL 제외
+            if text_found.lower().startswith(('http://', 'https://')):
+                continue
+
             # 정확한 매칭 체크
             is_match = False
             if has_path:
