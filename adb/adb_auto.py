@@ -1041,9 +1041,21 @@ class ADBController:
     # ──────────────────────────────────────────
     # 브라우저 제어
     # ──────────────────────────────────────────
+    def clear_browser_data(self, package="com.android.chrome"):
+        """브라우저 데이터 초기화 (새 프로필처럼 시작)"""
+        log(f"[ADB] 브라우저 데이터 초기화: {package}")
+        result = self.shell(f"pm clear {package}")
+        if result and "Success" in result:
+            log("[ADB] 브라우저 데이터 초기화 완료!")
+            time.sleep(1)  # 초기화 후 안정화 대기
+            return True
+        else:
+            log(f"[ADB] 브라우저 데이터 초기화 실패: {result}", "WARN")
+            return False
+
     def open_url(self, url, max_retry=3):
         """URL 열기 + 브라우저 실행 확인"""
-        
+
         for attempt in range(1, max_retry + 1):
             log(f"URL 열기 (시도 {attempt}/{max_retry}): {url}")
             self.shell(f'am start -a android.intent.action.VIEW -d "{url}"')
@@ -2060,6 +2072,11 @@ def main():
             log(f"[무한재시도] ADB 연결 실패, 5초 후 재시도... (#{full_restart_count})")
             time.sleep(5)
             continue
+
+        # 브라우저 데이터 초기화 (새 프로필)
+        if ADB_CONFIG.get("clear_browser_data", False):
+            package = ADB_CONFIG.get("browser_package", "com.android.chrome")
+            adb.clear_browser_data(package)
 
         # CDP 계산 (자동 브라우저 실행 + 캐시)
         cdp_info = None
