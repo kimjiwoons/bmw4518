@@ -188,11 +188,42 @@ class ChromeLauncher:
         except:
             return False
 
-    def launch(self, headless=True):
+    def kill_existing(self):
+        """기존 Chrome 디버깅 프로세스 종료"""
+        try:
+            if os.name == 'nt':  # Windows
+                # 포트 사용하는 프로세스 찾아서 종료
+                result = subprocess.run(
+                    f'netstat -ano | findstr :{self.port}',
+                    shell=True, capture_output=True, text=True
+                )
+                if result.stdout:
+                    for line in result.stdout.strip().split('\n'):
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            pid = parts[-1]
+                            subprocess.run(f'taskkill /F /PID {pid}', shell=True, capture_output=True)
+            else:  # Linux/Mac
+                subprocess.run(
+                    f"pkill -f 'chrome.*--remote-debugging-port={self.port}'",
+                    shell=True, capture_output=True
+                )
+                subprocess.run(f"fuser -k {self.port}/tcp", shell=True, capture_output=True)
+            time.sleep(1)
+            log(f"[Chrome] 기존 디버깅 프로세스 종료됨 (port={self.port})")
+        except Exception as e:
+            log(f"[Chrome] 기존 프로세스 종료 중 오류: {e}", "WARN")
+
+    def launch(self, headless=True, force_restart=False):
         """Chrome 디버깅 모드로 실행"""
         if self.is_running():
-            log("[Chrome] 이미 실행 중")
-            return True
+            if force_restart:
+                log("[Chrome] 기존 Chrome 종료 후 재시작...")
+                self.kill_existing()
+                time.sleep(1)
+            else:
+                log("[Chrome] 이미 실행 중")
+                return True
 
         if not self.chrome_path:
             log("[Chrome] Chrome 실행 파일을 찾을 수 없음", "ERROR")
@@ -2046,19 +2077,34 @@ def get_cdp_scroll_info(keyword, domain, screen_width, screen_height, force_refr
     if _chrome_launcher is None:
         _chrome_launcher = ChromeLauncher(port=CDP_CONFIG.get("port", 9222))
 
+    headless = CDP_CONFIG.get("headless", True)
+
+    # Chrome 실행 (없으면 시작)
     if not _chrome_launcher.is_running():
-        headless = CDP_CONFIG.get("headless", True)
         log(f"[CDP] Chrome 자동 실행 (headless={headless})...")
         if not _chrome_launcher.launch(headless=headless):
             log("[CDP] Chrome 실행 실패", "ERROR")
             return None
 
-    # CDP 연결 및 계산
+    # CDP 연결 시도
     cdp = CDPCalculator(port=CDP_CONFIG.get("port", 9222))
 
     if not cdp.connect():
-        log("[CDP] 연결 실패")
-        return None
+        # 연결 실패시 Chrome 재시작 후 재시도
+        log("[CDP] 연결 실패, Chrome 재시작 후 재시도...")
+        _chrome_launcher.kill_existing()
+        time.sleep(2)
+
+        if not _chrome_launcher.launch(headless=headless, force_restart=True):
+            log("[CDP] Chrome 재시작 실패", "ERROR")
+            return None
+
+        time.sleep(1)
+        cdp = CDPCalculator(port=CDP_CONFIG.get("port", 9222))
+
+        if not cdp.connect():
+            log("[CDP] 재시도 후에도 연결 실패", "ERROR")
+            return None
 
     try:
         cdp_info = cdp.calculate_scroll_info(keyword, domain, screen_width, screen_height)
