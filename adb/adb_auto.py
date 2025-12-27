@@ -122,9 +122,12 @@ class ChromeLauncher:
         # PATH에서 찾기
         for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"]:
             try:
-                result = subprocess.run(["which", cmd], capture_output=True, text=True)
+                # Windows는 'where', Linux/Mac은 'which' 사용
+                which_cmd = "where" if os.name == 'nt' else "which"
+                result = subprocess.run([which_cmd, cmd], capture_output=True, text=True)
                 if result.returncode == 0 and result.stdout.strip():
-                    self.chrome_path = result.stdout.strip()
+                    # Windows 'where'는 여러 줄 반환 가능, 첫 번째만 사용
+                    self.chrome_path = result.stdout.strip().split('\n')[0]
                     return
             except:
                 pass
@@ -300,10 +303,18 @@ class CDPCalculator:
             msg["params"] = params
         self.ws.send(json.dumps(msg))
 
-        while True:
-            response = json.loads(self.ws.recv())
-            if response.get("id") == self.msg_id:
-                return response.get("result", {})
+        # 최대 100번 응답 대기 (무한 루프 방지)
+        for _ in range(100):
+            try:
+                response = json.loads(self.ws.recv())
+                if response.get("id") == self.msg_id:
+                    return response.get("result", {})
+            except Exception as e:
+                log(f"[CDP] WebSocket 수신 오류: {e}", "ERROR")
+                return {}
+
+        log("[CDP] 응답 대기 타임아웃", "ERROR")
+        return {}
 
     def set_viewport(self, screen_width, screen_height):
         """뷰포트 크기 설정 (실제 모바일 브라우저 환경 반영)"""
@@ -1969,7 +1980,8 @@ def get_cdp_scroll_info(keyword, domain, screen_width, screen_height, force_refr
         cached = _scroll_cache.get(keyword, domain)
         if cached:
             count = _scroll_cache.get_count(keyword, domain)
-            log(f"[CDP] 캐시 사용 ({count}/10회)")
+            refresh_interval = CDP_CONFIG.get("cache_refresh_interval", 10)
+            log(f"[CDP] 캐시 사용 ({count}/{refresh_interval}회)")
             _scroll_cache.increment(keyword, domain)
             return cached
 
@@ -1999,7 +2011,8 @@ def get_cdp_scroll_info(keyword, domain, screen_width, screen_height, force_refr
         if cdp_info and cdp_info.get("calculated"):
             # 캐시에 저장
             _scroll_cache.set(keyword, domain, cdp_info)
-            log(f"[CDP] 스크롤 정보 캐시됨 (다음 9회 재사용)")
+            refresh_interval = CDP_CONFIG.get("cache_refresh_interval", 10)
+            log(f"[CDP] 스크롤 정보 캐시됨 (다음 {refresh_interval - 1}회 재사용)")
         return cdp_info
 
     finally:
