@@ -1518,9 +1518,21 @@ class NaverSearchAutomation:
     def _click_domain_link(self, visible_links, domain):
         """도메인 링크 클릭"""
         log(f"[발견] {domain} 링크 {len(visible_links)}개!")
-        
-        # 추가 랜덤 스크롤
-        extra = random.randint(30, 80) * random.choice([1, -1])
+
+        # 요소 위치에 따라 스크롤 방향 결정 (viewport 밖으로 나가지 않도록)
+        first_link = visible_links[0]
+        center_y = first_link["center_y"]
+        screen_middle = self.adb.screen_height // 2
+
+        if center_y < screen_middle:
+            # 상단에 있으면 위로 스크롤 (요소를 아래로)
+            extra = -random.randint(30, 80)
+            log(f"[스크롤] 요소 상단({center_y}) → 위로 {abs(extra)}px")
+        else:
+            # 하단에 있으면 아래로 스크롤 (요소를 위로)
+            extra = random.randint(30, 80)
+            log(f"[스크롤] 요소 하단({center_y}) → 아래로 {extra}px")
+
         self.adb.scroll_down(extra)
         time.sleep(0.3)
         
