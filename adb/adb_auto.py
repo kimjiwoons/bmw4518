@@ -550,20 +550,35 @@ class ADBController:
         log(f"스와이프: ({int(x1)}, {int(y1)}) → ({int(x2)}, {int(y2)}), {duration_ms}ms")
         self.shell(f"input swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {duration_ms}")
     
-    def scroll_down(self, distance=None):
-        """아래로 스크롤 (컨텐츠가 위로 올라감 = 아래 내용 보기)"""
+    def scroll_down(self, distance=None, fixed=False):
+        """아래로 스크롤 (컨텐츠가 위로 올라감 = 아래 내용 보기)
+
+        Args:
+            distance: 스크롤 거리 (None이면 설정값 사용)
+            fixed: True면 랜덤 없이 고정 거리 사용 (CDP 계산 모드용)
+        """
         if distance is None:
-            distance = SCROLL_CONFIG["distance"] + random.randint(
-                -SCROLL_CONFIG["distance_random"], SCROLL_CONFIG["distance_random"])
-        
-        x = COORDINATES["scroll_x"] + random.randint(-30, 30)
+            if fixed:
+                # CDP 계산 모드: 고정 거리 (랜덤 없음)
+                distance = SCROLL_CONFIG["distance"]
+            else:
+                # 일반 모드: 랜덤 거리
+                distance = SCROLL_CONFIG["distance"] + random.randint(
+                    -SCROLL_CONFIG["distance_random"], SCROLL_CONFIG["distance_random"])
+
+        if fixed:
+            # CDP 계산 모드: X 좌표도 고정
+            x = COORDINATES["scroll_x"]
+        else:
+            x = COORDINATES["scroll_x"] + random.randint(-30, 30)
+
         start_y = COORDINATES["scroll_start_y"]  # 1100
         end_y = start_y - distance  # 700쯤 (위로 스와이프)
-        
+
         self.swipe(x, start_y, x, end_y)
-        
-        # 읽기 멈춤 (확률적)
-        if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
+
+        # 읽기 멈춤 (확률적) - fixed 모드에서는 비활성화
+        if not fixed and READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
             pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
             log(f"읽기 멈춤: {pause:.1f}초")
             time.sleep(pause)
@@ -1110,12 +1125,12 @@ class NaverSearchAutomation:
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("more_scroll_count", 0) > 0:
             cdp_scroll = self.cdp_info["more_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤")
-            
-            # 덤프 없이 빠르게 스크롤 (읽기 멈춤 포함)
+            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (fixed 모드)")
+
+            # 덤프 없이 빠르게 스크롤 (fixed=True: 랜덤 없이 정확한 거리)
             for i in range(cdp_scroll):
-                self.adb.scroll_down()
-                
+                self.adb.scroll_down(fixed=True)
+
                 # 읽기 멈춤 (확률적)
                 if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
                     pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
@@ -1123,15 +1138,12 @@ class NaverSearchAutomation:
                     time.sleep(pause)
                 else:
                     time.sleep(random.uniform(0.1, 0.2))
-                
+
                 if (i + 1) % 10 == 0:
                     log(f"[5단계] 스크롤 {i + 1}/{cdp_scroll}...")
-            
-            # 여유분 3회 스크롤
-            log("[5단계] 여유분 3회 스크롤...")
-            for _ in range(3):
-                self.adb.scroll_down()
-                time.sleep(random.uniform(0.2, 0.3))
+
+            # 여유분은 이미 CDP 계산에 포함됨 (margin 설정)
+            # 추가 여유분 없음
             
             # 덤프해서 더보기 찾기
             xml = self.adb.get_screen_xml(force=True)
@@ -1246,28 +1258,25 @@ class NaverSearchAutomation:
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("domain_scroll_count", -1) >= 0:
             cdp_scroll = self.cdp_info["domain_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤")
-            
-            # 덤프 없이 빠르게 스크롤 (읽기 멈춤 포함)
+            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (fixed 모드)")
+
+            # 덤프 없이 빠르게 스크롤 (fixed=True: 랜덤 없이 정확한 거리)
             for i in range(cdp_scroll):
-                self.adb.scroll_down()
-                
+                self.adb.scroll_down(fixed=True)
+
                 if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
                     pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
                     log(f"읽기 멈춤: {pause:.1f}초")
                     time.sleep(pause)
                 else:
                     time.sleep(random.uniform(0.1, 0.2))
-                
+
                 if (i + 1) % 10 == 0:
                     log(f"[7단계] 스크롤 {i + 1}/{cdp_scroll}...")
-            
-            # 여유분 3회 스크롤
-            log("[7단계] 여유분 3회 스크롤...")
-            for _ in range(3):
-                self.adb.scroll_down()
-                time.sleep(random.uniform(0.2, 0.3))
-            
+
+            # 여유분은 이미 CDP 계산에 포함됨 (margin 설정)
+            # 추가 여유분 없음
+
             # 덤프해서 도메인 찾기
             return self._find_and_click_domain_final(domain)
         
