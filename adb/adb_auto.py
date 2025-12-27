@@ -68,9 +68,9 @@ class CDPScrollCache:
                     data = json.load(f)
                     self._cache = data.get("cache", {})
                     self._call_count = data.get("call_count", {})
-                    log(f"[캐시] 파일에서 로드: {len(self._cache)}개 항목")
+                    print(f"[INFO] [캐시] 파일에서 로드: {len(self._cache)}개 항목")
         except Exception as e:
-            log(f"[캐시] 파일 로드 실패: {e}", "ERROR")
+            print(f"[ERROR] [캐시] 파일 로드 실패: {e}")
             self._cache = {}
             self._call_count = {}
 
@@ -84,7 +84,7 @@ class CDPScrollCache:
             with open(self._cache_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            log(f"[캐시] 파일 저장 실패: {e}", "ERROR")
+            print(f"[ERROR] [캐시] 파일 저장 실패: {e}")
 
     def get(self, keyword, domain):
         """캐시된 스크롤 정보 반환 (없거나 갱신 필요시 None)"""
