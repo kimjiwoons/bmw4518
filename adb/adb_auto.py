@@ -1487,8 +1487,15 @@ class ADBController:
             if screenshot is None:
                 return {"found": False}
 
+            # 메모리 절약: 이미지 50% 리사이즈
+            original_size = screenshot.size
+            scale = 0.5
+            new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
+            screenshot_resized = screenshot.resize(new_size, Image.LANCZOS)
+            log(f"[OCR] 이미지 리사이즈: {original_size} → {new_size}")
+
             # PIL Image → numpy array
-            img_array = np.array(screenshot)
+            img_array = np.array(screenshot_resized)
 
             # OCR 실행
             results = OCR_READER.readtext(img_array)
@@ -1499,8 +1506,9 @@ class ADBController:
                     # bbox: [[x1,y1], [x2,y1], [x2,y2], [x1,y2]]
                     x1, y1 = bbox[0]
                     x2, y2 = bbox[2]
-                    center_x = int((x1 + x2) / 2)
-                    center_y = int((y1 + y2) / 2)
+                    # 원본 크기로 좌표 복원 (리사이즈했으므로)
+                    center_x = int((x1 + x2) / 2 / scale)
+                    center_y = int((y1 + y2) / 2 / scale)
 
                     log(f"[OCR] '{target_text}' 발견 → ({center_x}, {center_y}) conf={confidence:.2f}")
                     return {
