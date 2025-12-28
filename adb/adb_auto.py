@@ -486,7 +486,8 @@ class MobileCDP:
                                 width: rect.width,
                                 height: rect.height,
                                 text: el.textContent.substring(0, 50),
-                                in_viewport: rect.top > 0 && rect.bottom < viewportHeight
+                                in_viewport: rect.top > 0 && rect.bottom < viewportHeight,
+                                viewport_height: viewportHeight
                             }};
                         }}
                     }}
@@ -2007,30 +2008,35 @@ class NaverSearchAutomation:
             # viewport_only=False: 위치 정보 필요하므로 모든 요소 검색
             result = self.mobile_cdp.find_element_by_text(text, viewport_only=False)
             if result.get("found"):
+                # MobileCDP 좌표는 브라우저 뷰포트 기준!
+                browser_y = result["y"]
+                browser_viewport_height = result.get("viewport_height", 800)
+
                 # MobileCDP 좌표 → ADBController 형식으로 변환
                 element = {
                     "found": True,
                     "center_x": result["x"],
-                    "center_y": result["y"],
+                    "center_y": browser_y,
                     "bounds": (
                         result["x"] - result.get("width", 100) // 2,
-                        result["y"] - result.get("height", 50) // 2,
+                        browser_y - result.get("height", 50) // 2,
                         result["x"] + result.get("width", 100) // 2,
-                        result["y"] + result.get("height", 50) // 2
+                        browser_y + result.get("height", 50) // 2
                     ),
                     "text": result.get("text", text),
                     "source": "mobile_cdp"
                 }
 
-                # 뷰포트 체크
+                # 뷰포트 체크 (브라우저 뷰포트 기준: 0 ~ innerHeight)
                 if check_viewport:
-                    cy = element["center_y"]
-                    if self.viewport_top <= cy <= self.viewport_bottom:
-                        log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {cy})")
+                    # 브라우저 뷰포트 안에 있으면 발견!
+                    # 약간의 여유를 두고 체크 (상단 50px, 하단 50px 여유)
+                    if 50 < browser_y < (browser_viewport_height - 50):
+                        log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {browser_y})")
                         return element
                     else:
-                        log(f"[CDP찾기] '{text}' 뷰포트 밖 (y={cy})")
-                        return {"found": False, "out_of_viewport": True, "y": cy}
+                        log(f"[CDP찾기] '{text}' 뷰포트 밖 (y={browser_y}, viewport=0~{browser_viewport_height})")
+                        return {"found": False, "out_of_viewport": True, "y": browser_y}
                 else:
                     log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {element['center_y']})")
                     return element
