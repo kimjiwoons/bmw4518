@@ -58,10 +58,14 @@ BROWSERS = {
     "chrome": {
         "package": "com.android.chrome",
         "activity": "com.google.android.apps.chrome.Main",
+        "devtools_socket": "chrome_devtools_remote",  # CDP 소켓
+        "cdp_port": 9222,  # 포트 포워딩용
     },
     "samsung": {
         "package": "com.sec.android.app.sbrowser",
         "activity": ".SBrowserMainActivity",
+        "devtools_socket": "Terrace_devtools_remote",  # CDP 소켓
+        "cdp_port": 9223,  # 포트 포워딩용
     },
     "firefox": {
         "package": "org.mozilla.firefox",

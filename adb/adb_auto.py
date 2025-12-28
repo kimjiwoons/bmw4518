@@ -326,6 +326,264 @@ def random_delay(min_sec, max_sec):
 
 
 # ============================================
+# 모바일 브라우저 CDP (읽기 전용 - 요소 찾기만!)
+# ============================================
+class MobileCDP:
+    """모바일 브라우저 CDP 연결 (읽기 전용)
+
+    주의: 이 클래스는 요소 찾기와 좌표 확인만 합니다!
+    실제 입력(탭, 스크롤)은 ADB로 해야 감지를 피할 수 있습니다.
+    """
+
+    def __init__(self, adb_address, browser="chrome"):
+        from config import BROWSERS
+        self.adb_address = adb_address
+        self.browser = browser
+        self.browser_info = BROWSERS.get(browser, BROWSERS["chrome"])
+        self.port = self.browser_info.get("cdp_port", 9222)
+        self.socket_name = self.browser_info.get("devtools_socket")
+        self.ws = None
+        self.msg_id = 0
+        self.connected = False
+        self.adb_path = ADB_CONFIG.get("adb_path", "adb")
+
+    def setup_port_forwarding(self):
+        """ADB 포트 포워딩 설정"""
+        if not self.socket_name:
+            log(f"[MobileCDP] {self.browser}는 CDP를 지원하지 않음")
+            return False
+
+        try:
+            # 기존 포워딩 제거
+            cmd = f'{self.adb_path} -s {self.adb_address} forward --remove tcp:{self.port}'
+            subprocess.run(cmd, shell=True, capture_output=True)
+
+            # 새 포워딩 설정
+            cmd = f'{self.adb_path} -s {self.adb_address} forward tcp:{self.port} localabstract:{self.socket_name}'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                log(f"[MobileCDP] 포트 포워딩 설정: tcp:{self.port} → {self.socket_name}")
+                return True
+            else:
+                log(f"[MobileCDP] 포트 포워딩 실패: {result.stderr}", "ERROR")
+                return False
+        except Exception as e:
+            log(f"[MobileCDP] 포트 포워딩 오류: {e}", "ERROR")
+            return False
+
+    def connect(self):
+        """모바일 브라우저 CDP 연결"""
+        if not CDP_AVAILABLE:
+            log("[MobileCDP] requests/websocket 모듈 없음")
+            return False
+
+        if not self.setup_port_forwarding():
+            return False
+
+        try:
+            time.sleep(0.5)  # 포워딩 안정화 대기
+            response = requests.get(f"http://localhost:{self.port}/json", timeout=5)
+            tabs = response.json()
+
+            ws_url = None
+            for tab in tabs:
+                if tab.get("type") == "page" and "naver" in tab.get("url", "").lower():
+                    ws_url = tab["webSocketDebuggerUrl"]
+                    break
+
+            # 네이버 탭 없으면 첫 번째 페이지 탭 사용
+            if not ws_url:
+                for tab in tabs:
+                    if tab.get("type") == "page":
+                        ws_url = tab["webSocketDebuggerUrl"]
+                        break
+
+            if not ws_url:
+                log("[MobileCDP] 탭을 찾을 수 없음")
+                return False
+
+            self.ws = websocket.create_connection(ws_url, timeout=10)
+            self.connected = True
+            log(f"[MobileCDP] {self.browser} 브라우저 연결 성공!")
+            return True
+
+        except Exception as e:
+            log(f"[MobileCDP] 연결 실패: {e}", "ERROR")
+            return False
+
+    def disconnect(self):
+        """연결 종료"""
+        if self.ws:
+            try:
+                self.ws.close()
+            except:
+                pass
+        self.ws = None
+        self.connected = False
+
+    def send(self, method, params=None, timeout=10):
+        """CDP 명령 전송 (읽기 전용 명령만!)"""
+        if not self.connected:
+            return {}
+
+        self.msg_id += 1
+        msg = {"id": self.msg_id, "method": method}
+        if params:
+            msg["params"] = params
+        self.ws.send(json.dumps(msg))
+
+        start_time = time.time()
+        self.ws.settimeout(1.0)
+
+        while (time.time() - start_time) < timeout:
+            try:
+                response = json.loads(self.ws.recv())
+                if "id" in response and response["id"] == self.msg_id:
+                    return response.get("result", {})
+            except websocket.WebSocketTimeoutException:
+                continue
+            except Exception as e:
+                log(f"[MobileCDP] 수신 오류: {e}", "ERROR")
+                return {}
+
+        return {}
+
+    def find_element_by_text(self, text, tag="*"):
+        """텍스트로 요소 찾기 → 좌표 반환 (읽기 전용!)
+
+        Returns:
+            dict: {"found": True, "x": 360, "y": 500, "text": "..."}
+        """
+        if not self.connected:
+            return {"found": False}
+
+        try:
+            # JavaScript로 요소 찾기 (DOM 읽기만 - 감지 불가)
+            js_code = f'''
+            (function() {{
+                var elements = document.querySelectorAll('{tag}');
+                for (var el of elements) {{
+                    if (el.textContent && el.textContent.includes('{text}')) {{
+                        var rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {{
+                            return {{
+                                found: true,
+                                x: Math.round(rect.left + rect.width / 2),
+                                y: Math.round(rect.top + rect.height / 2),
+                                width: rect.width,
+                                height: rect.height,
+                                text: el.textContent.substring(0, 50)
+                            }};
+                        }}
+                    }}
+                }}
+                return {{found: false}};
+            }})()
+            '''
+
+            result = self.send("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                value = result["result"].get("value", {})
+                if value.get("found"):
+                    log(f"[MobileCDP] 요소 발견: '{text}' → ({value['x']}, {value['y']})")
+                    return value
+
+            return {"found": False}
+
+        except Exception as e:
+            log(f"[MobileCDP] 요소 찾기 오류: {e}", "ERROR")
+            return {"found": False}
+
+    def find_link_by_domain(self, domain):
+        """도메인으로 링크 찾기 → 좌표 반환 (읽기 전용!)
+
+        Returns:
+            dict: {"found": True, "x": 360, "y": 500, "href": "..."}
+        """
+        if not self.connected:
+            return {"found": False}
+
+        try:
+            # 도메인 포함된 링크 찾기
+            js_code = f'''
+            (function() {{
+                var links = document.querySelectorAll('a[href*="{domain}"]');
+                for (var link of links) {{
+                    var rect = link.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top > 0) {{
+                        return {{
+                            found: true,
+                            x: Math.round(rect.left + rect.width / 2),
+                            y: Math.round(rect.top + rect.height / 2),
+                            width: rect.width,
+                            height: rect.height,
+                            href: link.href,
+                            text: link.textContent.substring(0, 50)
+                        }};
+                    }}
+                }}
+                return {{found: false}};
+            }})()
+            '''
+
+            result = self.send("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                value = result["result"].get("value", {})
+                if value.get("found"):
+                    log(f"[MobileCDP] 링크 발견: {domain} → ({value['x']}, {value['y']})")
+                    return value
+
+            return {"found": False}
+
+        except Exception as e:
+            log(f"[MobileCDP] 링크 찾기 오류: {e}", "ERROR")
+            return {"found": False}
+
+    def get_scroll_position(self):
+        """현재 스크롤 위치 확인 (읽기 전용!)"""
+        if not self.connected:
+            return 0
+
+        try:
+            result = self.send("Runtime.evaluate", {
+                "expression": "window.scrollY || document.documentElement.scrollTop",
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                return result["result"].get("value", 0)
+            return 0
+        except:
+            return 0
+
+    def get_page_height(self):
+        """페이지 전체 높이 (읽기 전용!)"""
+        if not self.connected:
+            return 0
+
+        try:
+            result = self.send("Runtime.evaluate", {
+                "expression": "document.documentElement.scrollHeight",
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                return result["result"].get("value", 0)
+            return 0
+        except:
+            return 0
+
+
+# ============================================
 # CDP 스크롤 계산기 (정확도 향상 버전)
 # ============================================
 class CDPCalculator:
@@ -1564,6 +1822,125 @@ class NaverSearchAutomation:
         self.viewport_bottom = adb.screen_height * 0.85
         self.cdp_info = cdp_info  # CDP 계산 결과
         self.browser = browser  # 사용할 브라우저
+
+        # 모바일 CDP 연결 (요소 찾기용 - 읽기 전용!)
+        self.mobile_cdp = None
+        self._init_mobile_cdp()
+
+    def _init_mobile_cdp(self):
+        """모바일 브라우저 CDP 초기화 (읽기 전용)"""
+        from config import BROWSERS
+        browser_info = BROWSERS.get(self.browser, {})
+
+        # CDP 지원 브라우저인지 확인
+        if browser_info.get("devtools_socket"):
+            try:
+                self.mobile_cdp = MobileCDP(self.adb.adb_address, self.browser)
+                if self.mobile_cdp.connect():
+                    log(f"[MobileCDP] {self.browser} 브라우저 CDP 연결됨 (요소 찾기용)")
+                else:
+                    self.mobile_cdp = None
+                    log(f"[MobileCDP] {self.browser} CDP 연결 실패, 기존 방식 사용")
+            except Exception as e:
+                self.mobile_cdp = None
+                log(f"[MobileCDP] 초기화 오류: {e}", "WARN")
+
+    def _find_element_by_text_hybrid(self, text, check_viewport=True):
+        """하이브리드 요소 찾기: MobileCDP 우선, 실패시 uiautomator
+
+        Args:
+            text: 찾을 텍스트
+            check_viewport: 뷰포트 범위 체크 여부
+
+        Returns:
+            dict: {"found": True, "center_x": x, "center_y": y, ...}
+        """
+        # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
+        if self.mobile_cdp and self.mobile_cdp.connected:
+            result = self.mobile_cdp.find_element_by_text(text)
+            if result.get("found"):
+                # MobileCDP 좌표 → ADBController 형식으로 변환
+                element = {
+                    "found": True,
+                    "center_x": result["x"],
+                    "center_y": result["y"],
+                    "bounds": (
+                        result["x"] - result.get("width", 100) // 2,
+                        result["y"] - result.get("height", 50) // 2,
+                        result["x"] + result.get("width", 100) // 2,
+                        result["y"] + result.get("height", 50) // 2
+                    ),
+                    "text": result.get("text", text),
+                    "source": "mobile_cdp"
+                }
+
+                # 뷰포트 체크
+                if check_viewport:
+                    cy = element["center_y"]
+                    if self.viewport_top <= cy <= self.viewport_bottom:
+                        log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {cy})")
+                        return element
+                    else:
+                        log(f"[CDP찾기] '{text}' 뷰포트 밖 (y={cy})")
+                        return {"found": False, "out_of_viewport": True, "y": cy}
+                else:
+                    log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {element['center_y']})")
+                    return element
+
+        # 2순위: uiautomator (기존 방식)
+        xml = self.adb.get_screen_xml(force=True)
+        element = self.adb.find_element_by_text(text, xml=xml)
+
+        if element.get("found") and check_viewport:
+            cy = element["center_y"]
+            if self.viewport_top <= cy <= self.viewport_bottom:
+                element["source"] = "uiautomator"
+                return element
+            else:
+                return {"found": False, "out_of_viewport": True, "y": cy}
+
+        if element.get("found"):
+            element["source"] = "uiautomator"
+
+        return element
+
+    def _find_link_by_domain_hybrid(self, domain):
+        """하이브리드 도메인 링크 찾기: MobileCDP 우선
+
+        Returns:
+            dict: {"found": True, "center_x": x, "center_y": y, "href": ...}
+        """
+        # 1순위: MobileCDP
+        if self.mobile_cdp and self.mobile_cdp.connected:
+            result = self.mobile_cdp.find_link_by_domain(domain)
+            if result.get("found"):
+                element = {
+                    "found": True,
+                    "center_x": result["x"],
+                    "center_y": result["y"],
+                    "bounds": (
+                        result["x"] - result.get("width", 100) // 2,
+                        result["y"] - result.get("height", 50) // 2,
+                        result["x"] + result.get("width", 100) // 2,
+                        result["y"] + result.get("height", 50) // 2
+                    ),
+                    "href": result.get("href", ""),
+                    "text": result.get("text", ""),
+                    "source": "mobile_cdp"
+                }
+                log(f"[CDP찾기] 도메인 '{domain}' 발견 → ({element['center_x']}, {element['center_y']})")
+                return element
+
+        # 2순위: uiautomator 도메인 검색
+        links = self.adb.find_domain_links(domain)
+        if links:
+            for link in links:
+                cy = link["center_y"]
+                if self.viewport_top <= cy <= self.viewport_bottom:
+                    link["source"] = "uiautomator"
+                    return link
+
+        return {"found": False}
     
     # ========================================
     # 1단계: 네이버 메인 이동
