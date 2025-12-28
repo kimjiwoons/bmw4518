@@ -2014,19 +2014,25 @@ class NaverSearchAutomation:
                 browser_y = result["y"]
                 browser_viewport_height = result.get("viewport_height", 800)
 
-                # MobileCDP 좌표 → ADBController 형식으로 변환
+                # 브라우저 주소창 오프셋 (브라우저 좌표 → 화면 좌표)
+                # 삼성브라우저 주소창 약 150px, 상태바 포함
+                browser_offset = int(self.adb.screen_height * 0.1)  # 화면의 10% (약 144px)
+                screen_y = browser_y + browser_offset
+
+                # MobileCDP 좌표 → ADBController 형식으로 변환 (화면 좌표로!)
                 element = {
                     "found": True,
                     "center_x": result["x"],
-                    "center_y": browser_y,
+                    "center_y": screen_y,  # 화면 좌표로 변환!
                     "bounds": (
                         result["x"] - result.get("width", 100) // 2,
-                        browser_y - result.get("height", 50) // 2,
+                        screen_y - result.get("height", 50) // 2,
                         result["x"] + result.get("width", 100) // 2,
-                        browser_y + result.get("height", 50) // 2
+                        screen_y + result.get("height", 50) // 2
                     ),
                     "text": result.get("text", text),
-                    "source": "mobile_cdp"
+                    "source": "mobile_cdp",
+                    "browser_y": browser_y  # 원본 브라우저 좌표 (뷰포트 체크용)
                 }
 
                 # 뷰포트 체크 (브라우저 뷰포트 기준: 0 ~ innerHeight)
@@ -2034,13 +2040,13 @@ class NaverSearchAutomation:
                     # 브라우저 뷰포트 안에 있으면 발견!
                     # 약간의 여유를 두고 체크 (상단 50px, 하단 50px 여유)
                     if 50 < browser_y < (browser_viewport_height - 50):
-                        log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {browser_y})")
+                        log(f"[CDP찾기] '{text}' 발견 → 브라우저({result['x']}, {browser_y}) → 화면({element['center_x']}, {screen_y})")
                         return element
                     else:
                         log(f"[CDP찾기] '{text}' 뷰포트 밖 (y={browser_y}, viewport=0~{browser_viewport_height})")
                         return {"found": False, "out_of_viewport": True, "y": browser_y}
                 else:
-                    log(f"[CDP찾기] '{text}' 발견 → ({element['center_x']}, {element['center_y']})")
+                    log(f"[CDP찾기] '{text}' 발견 → 화면({element['center_x']}, {screen_y})")
                     return element
 
         # 2순위: uiautomator (기존 방식)
