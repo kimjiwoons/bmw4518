@@ -2712,9 +2712,14 @@ class NaverSearchAutomation:
                     log(f"[TEMPLATE] '{target}' 좌표: ({template_element['x']}, {template_element['y']})")
                     # 템플릿 매칭에서 이미 클릭했으므로 로딩 대기만
                     return self._wait_for_more_page_load()
+                else:
+                    # 템플릿 매칭 실패 → fallback 클릭 금지!
+                    log("[TEMPLATE] 템플릿 매칭 실패 - 화면에 버튼이 보이지 않음", "WARNING")
+                    log("[TEMPLATE] fallback 클릭 금지, 재시도 필요 (스크롤/위치 확인)")
+                    return False  # 클릭하지 않고 실패 반환
             else:
-                log(f"[TEMPLATE] 템플릿 파일 없음: {template_path}")
-                log("[TEMPLATE] 기존 방식으로 fallback")
+                log(f"[TEMPLATE] 템플릿 파일 없음: {template_path}", "ERROR")
+                return False  # 템플릿 파일 없으면 진행 불가
 
         for click_try in range(1, max_retry + 1):
             time.sleep(random.uniform(0.3, 0.6))
