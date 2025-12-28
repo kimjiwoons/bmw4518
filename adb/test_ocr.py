@@ -91,10 +91,11 @@ def do_ocr_test(target_text, do_click=False):
         screenshot = enhancer.enhance(2.0)  # 대비 2배
         log(f"[STEP2] mode: {screenshot.mode}, size: {screenshot.size}")
 
-        # 3. OCR 실행 (한글)
-        log("[STEP3] pytesseract OCR 실행 (lang=kor)...")
+        # 3. OCR 실행 (한글) - PSM 6: 단일 텍스트 블록으로 인식
+        log("[STEP3] pytesseract OCR 실행 (lang=kor, psm=6)...")
         # 박스 정보 포함해서 OCR
-        data = pytesseract.image_to_data(screenshot, lang='kor', output_type=pytesseract.Output.DICT)
+        custom_config = r'--oem 3 --psm 6'
+        data = pytesseract.image_to_data(screenshot, lang='kor', config=custom_config, output_type=pytesseract.Output.DICT)
         log(f"[STEP3] 완료! 감지된 항목: {len(data['text'])}개")
 
         # 4. 결과 분석
