@@ -2347,25 +2347,46 @@ class NaverSearchAutomation:
                 log("[5단계] 못 찾음, 아래로 추가 스크롤...")
                 scroll_direction = "down"
 
-            for extra in range(15):
+            last_y = element.get("y", 0) if element.get("out_of_viewport") else 0
+
+            for extra in range(20):
+                # 요소와 뷰포트 거리에 따라 스크롤 크기 조절
+                distance_to_viewport = abs(last_y)
+
                 if scroll_direction == "up":
-                    self.adb.scroll_up(short_scroll)
+                    # 뷰포트에 가까울수록 작게 스크롤 (지나치지 않도록)
+                    if distance_to_viewport < 300:
+                        scroll_amount = max(80, distance_to_viewport // 2)
+                    elif distance_to_viewport < 600:
+                        scroll_amount = max(150, distance_to_viewport // 3)
+                    else:
+                        scroll_amount = short_scroll
+                    log(f"[5단계] 위로 스크롤: {scroll_amount}px (현재 y={last_y})")
+                    self.adb.scroll_up(scroll_amount)
                 else:
                     self.adb.scroll_down(short_scroll)
+
                 time.sleep(0.3)
                 element = self._find_element_by_text_hybrid(target, check_viewport=True)
+
                 if element.get("found"):
                     log(f"[발견] '{target}' y={element['center_y']} (추가 {extra + 1}회, {element.get('source', 'unknown')})")
                     return element
-                # 방향 전환: 계속 못 찾고 y가 반대로 갔으면
+
+                # 위치 업데이트 및 방향 전환 체크
                 if element.get("out_of_viewport"):
                     new_y = element.get("y", 0)
-                    if scroll_direction == "up" and new_y > self.adb.screen_height:
-                        log(f"[5단계] 방향 전환: 아래로")
+                    log(f"[5단계] 요소 위치: y={new_y}")
+
+                    # 방향 전환 체크
+                    if scroll_direction == "up" and new_y > self.viewport_bottom:
+                        log(f"[5단계] 지나침! 방향 전환: 아래로")
                         scroll_direction = "down"
                     elif scroll_direction == "down" and new_y < 0:
-                        log(f"[5단계] 방향 전환: 위로")
+                        log(f"[5단계] 지나침! 방향 전환: 위로")
                         scroll_direction = "up"
+
+                    last_y = new_y
             
             log(f"[실패] '{target}' 못 찾음", "ERROR")
             return None
