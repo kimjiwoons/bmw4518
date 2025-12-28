@@ -1583,7 +1583,7 @@ class NaverSearchAutomation:
             if use_coordinate_fallback:
                 # 좌표 기반 클릭 (네이버 검색창 위치)
                 # 720x1440 기준 검색창 좌표, 해상도에 맞게 비율 조정
-                base_x, base_y = 360, 150  # 네이버 메인 검색창 대략 위치
+                base_x, base_y = 170, 200  # 네이버 메인 검색창 (N 로고 영역)
                 scale_x = self.adb.screen_width / 720
                 scale_y = self.adb.screen_height / 1440
                 tap_x = int(base_x * scale_x)
