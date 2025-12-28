@@ -8,6 +8,7 @@
 import subprocess
 import sys
 import time
+import random
 
 def log(msg):
     print(msg, flush=True)
@@ -103,16 +104,24 @@ def find_template(template_path, threshold=0.8, do_click=False):
         # 4. 결과
         log("=" * 50)
         if max_val >= threshold:
-            cx = max_loc[0] + w // 2
-            cy = max_loc[1] + h // 2
-            log(f"[SUCCESS] 발견! 중심: ({cx}, {cy})")
+            # 템플릿 영역 좌표
+            x1, y1 = max_loc[0], max_loc[1]
+            x2, y2 = x1 + w, y1 + h
+            cx = x1 + w // 2
+            cy = y1 + h // 2
+            log(f"[SUCCESS] 발견! 영역: ({x1},{y1})-({x2},{y2}), 중심: ({cx},{cy})")
 
             if do_click:
-                log("[CLICK] 클릭...")
+                # 템플릿 영역 안에서 랜덤 클릭 (가장자리 10% 제외)
+                margin_x = int(w * 0.1)
+                margin_y = int(h * 0.1)
+                rand_x = random.randint(x1 + margin_x, x2 - margin_x)
+                rand_y = random.randint(y1 + margin_y, y2 - margin_y)
+                log(f"[CLICK] 랜덤 위치: ({rand_x}, {rand_y})")
                 time.sleep(0.3)
-                tap(cx, cy)
+                tap(rand_x, rand_y)
                 log("[CLICK] 완료!")
-            return {"x": cx, "y": cy, "conf": max_val}
+            return {"x": cx, "y": cy, "conf": max_val, "bounds": (x1, y1, x2, y2)}
         else:
             log(f"[FAIL] 못 찾음 ({max_val:.3f} < {threshold})")
             return None
