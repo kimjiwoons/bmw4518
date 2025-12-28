@@ -22,17 +22,13 @@ try:
 except ImportError:
     CDP_AVAILABLE = False
 
-# OCR 관련 (선택적)
+# 템플릿 매칭 관련 (OpenCV)
 try:
-    import easyocr
+    import cv2
     import numpy as np
-    from PIL import Image
-    import io
-    OCR_AVAILABLE = True
-    OCR_READER = None  # 지연 초기화
+    TEMPLATE_MATCHING_AVAILABLE = True
 except ImportError:
-    OCR_AVAILABLE = False
-    OCR_READER = None
+    TEMPLATE_MATCHING_AVAILABLE = False
 
 import os
 import signal
@@ -1458,78 +1454,89 @@ class ADBController:
             log(f"[OCR] 스크린샷 오류: {e}", "ERROR")
             return None
 
-    def find_text_by_ocr(self, target_text, screenshot=None):
-        """OCR로 텍스트 찾아서 화면 좌표 반환
+    def find_template(self, template_path, threshold=0.7, do_click=False):
+        """템플릿 이미지를 화면에서 찾기
 
         Args:
-            target_text: 찾을 텍스트
-            screenshot: PIL Image (없으면 새로 촬영)
+            template_path: 템플릿 이미지 경로
+            threshold: 유사도 임계값 (0.0~1.0, 기본 0.7)
+            do_click: True면 찾은 위치 클릭
 
         Returns:
-            dict: {"found": True, "x": 221, "y": 244, "confidence": 0.95, ...}
+            dict: {"found": True, "x": cx, "y": cy, "conf": 0.95, "bounds": (x1,y1,x2,y2)}
         """
-        global OCR_READER
-
-        if not OCR_AVAILABLE:
-            log("[OCR] easyocr 미설치", "ERROR")
+        if not TEMPLATE_MATCHING_AVAILABLE:
+            log("[TEMPLATE] opencv 미설치", "ERROR")
             return {"found": False}
 
         try:
-            # OCR 리더 초기화 (최초 1회)
-            if OCR_READER is None:
-                log("[OCR] EasyOCR 초기화 중... (최초 1회, 시간 소요)")
-                OCR_READER = easyocr.Reader(['ko', 'en'], gpu=False)
-                log("[OCR] EasyOCR 초기화 완료")
+            # 1. 템플릿 로드
+            template = cv2.imread(template_path)
+            if template is None:
+                log(f"[TEMPLATE] 파일 없음: {template_path}", "ERROR")
+                return {"found": False}
+            h, w = template.shape[:2]
+            log(f"[TEMPLATE] 템플릿 로드: {w}x{h}")
 
-            # 스크린샷 촬영
-            if screenshot is None:
-                screenshot = self.take_screenshot()
-            if screenshot is None:
+            # 2. 스크린샷 촬영 (ADB exec-out screencap -p → numpy array)
+            log("[TEMPLATE] 스크린샷 촬영...")
+            cmd = f'{self.adb_path} -s {self.adb_address} exec-out screencap -p'
+            result = subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
+            if result.returncode != 0 or not result.stdout:
+                log("[TEMPLATE] 스크린샷 실패", "ERROR")
                 return {"found": False}
 
-            # 메모리 절약: 이미지 50% 리사이즈
-            original_size = screenshot.size
-            scale = 0.5
-            new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
-            screenshot_resized = screenshot.resize(new_size, Image.LANCZOS)
-            log(f"[OCR] 이미지 리사이즈: {original_size} → {new_size}")
+            img_array = np.frombuffer(result.stdout, dtype=np.uint8)
+            screenshot = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            if screenshot is None:
+                log("[TEMPLATE] 이미지 디코딩 실패", "ERROR")
+                return {"found": False}
+            log(f"[TEMPLATE] 스크린샷: {screenshot.shape[1]}x{screenshot.shape[0]}")
 
-            # PIL Image → numpy array
-            img_array = np.array(screenshot_resized)
+            # 3. 템플릿 매칭
+            log("[TEMPLATE] 매칭 중...")
+            match_result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(match_result)
+            log(f"[TEMPLATE] 유사도: {max_val:.3f} (임계값: {threshold})")
 
-            # OCR 실행
-            results = OCR_READER.readtext(img_array)
+            # 4. 결과 판정
+            if max_val >= threshold:
+                x1, y1 = max_loc[0], max_loc[1]
+                x2, y2 = x1 + w, y1 + h
+                cx = x1 + w // 2
+                cy = y1 + h // 2
+                log(f"[TEMPLATE] 발견! 영역: ({x1},{y1})-({x2},{y2}), 중심: ({cx},{cy})")
 
-            # 결과에서 타겟 텍스트 찾기
-            for (bbox, text, confidence) in results:
-                if target_text in text:
-                    # bbox: [[x1,y1], [x2,y1], [x2,y2], [x1,y2]]
-                    x1, y1 = bbox[0]
-                    x2, y2 = bbox[2]
-                    # 원본 크기로 좌표 복원 (리사이즈했으므로)
-                    center_x = int((x1 + x2) / 2 / scale)
-                    center_y = int((y1 + y2) / 2 / scale)
+                if do_click:
+                    # 템플릿 영역 안에서 랜덤 클릭 (가장자리 10% 제외)
+                    margin_x = int(w * 0.1)
+                    margin_y = int(h * 0.1)
+                    rand_x = random.randint(x1 + margin_x, x2 - margin_x)
+                    rand_y = random.randint(y1 + margin_y, y2 - margin_y)
+                    log(f"[TEMPLATE] 랜덤 클릭: ({rand_x}, {rand_y})")
+                    time.sleep(0.3)
+                    self.tap(rand_x, rand_y, randomize=False)  # 이미 랜덤화됨
 
-                    log(f"[OCR] '{target_text}' 발견 → ({center_x}, {center_y}) conf={confidence:.2f}")
-                    return {
-                        "found": True,
-                        "x": center_x,
-                        "y": center_y,
-                        "center_x": center_x,
-                        "center_y": center_y,
-                        "width": int(x2 - x1),
-                        "height": int(y2 - y1),
-                        "bounds": (int(x1), int(y1), int(x2), int(y2)),
-                        "confidence": confidence,
-                        "text": text,
-                        "source": "ocr"
-                    }
-
-            log(f"[OCR] '{target_text}' 못 찾음 (감지된 텍스트 {len(results)}개)")
-            return {"found": False}
+                return {
+                    "found": True,
+                    "x": cx,
+                    "y": cy,
+                    "center_x": cx,
+                    "center_y": cy,
+                    "width": w,
+                    "height": h,
+                    "bounds": (x1, y1, x2, y2),
+                    "conf": max_val,
+                    "source": "template"
+                }
+            else:
+                log(f"[TEMPLATE] 못 찾음 ({max_val:.3f} < {threshold})")
+                return {"found": False}
 
         except Exception as e:
-            log(f"[OCR] 오류: {e}", "ERROR")
+            log(f"[TEMPLATE] 오류: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
             return {"found": False}
 
     # ──────────────────────────────────────────
@@ -2692,13 +2699,22 @@ class NaverSearchAutomation:
         # 클릭 전 안정화 대기 (CDP 동일)
         random_delay(0.5, 1.0)
 
-        # 삼성 브라우저: OCR로 정확한 좌표 찾기 (CDP 좌표 오차 문제 해결)
-        if self.browser == "samsung" and OCR_AVAILABLE:
-            log("[OCR] 삼성 브라우저 - OCR로 정확한 좌표 찾기")
-            ocr_element = self.adb.find_text_by_ocr(target)
-            if ocr_element.get("found"):
-                element = ocr_element
-                log(f"[OCR] '{target}' 좌표: ({element['x']}, {element['y']})")
+        # 삼성 브라우저: 템플릿 매칭으로 정확한 좌표 찾기 (CDP 좌표 오차 문제 해결)
+        if self.browser == "samsung" and TEMPLATE_MATCHING_AVAILABLE:
+            # 템플릿 파일 경로 (스크립트 디렉토리에 위치)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            template_path = os.path.join(script_dir, "template_more.png")
+
+            if os.path.exists(template_path):
+                log("[TEMPLATE] 삼성 브라우저 - 템플릿 매칭으로 정확한 좌표 찾기")
+                template_element = self.adb.find_template(template_path, threshold=0.7, do_click=True)
+                if template_element.get("found"):
+                    log(f"[TEMPLATE] '{target}' 좌표: ({template_element['x']}, {template_element['y']})")
+                    # 템플릿 매칭에서 이미 클릭했으므로 로딩 대기만
+                    return self._wait_for_more_page_load()
+            else:
+                log(f"[TEMPLATE] 템플릿 파일 없음: {template_path}")
+                log("[TEMPLATE] 기존 방식으로 fallback")
 
         for click_try in range(1, max_retry + 1):
             time.sleep(random.uniform(0.3, 0.6))
@@ -2724,11 +2740,16 @@ class NaverSearchAutomation:
                 # URL 안 바뀌면 재클릭 (CDP 동일)
                 if reclick_try < max_reclick - 1:
                     log(f"[재클릭] 페이지 변경 없음, 재클릭 {reclick_try + 2}/{max_reclick}...")
-                    # 삼성 브라우저: OCR로 다시 찾기
-                    if self.browser == "samsung" and OCR_AVAILABLE:
-                        element = self.adb.find_text_by_ocr(target)
-                    else:
-                        element = self._find_element_by_text_hybrid(target, check_viewport=False)
+                    # 삼성 브라우저: 템플릿 매칭으로 다시 찾기
+                    if self.browser == "samsung" and TEMPLATE_MATCHING_AVAILABLE:
+                        script_dir = os.path.dirname(os.path.abspath(__file__))
+                        template_path = os.path.join(script_dir, "template_more.png")
+                        if os.path.exists(template_path):
+                            template_element = self.adb.find_template(template_path, threshold=0.7, do_click=True)
+                            if template_element.get("found"):
+                                continue  # 클릭 완료, 다음 대기 루프로
+                    # fallback: 기존 방식
+                    element = self._find_element_by_text_hybrid(target, check_viewport=False)
                     if element.get("found"):
                         self.adb.tap_element(element)
 
@@ -2737,6 +2758,24 @@ class NaverSearchAutomation:
             return False
 
         log(f"[실패] 더보기 클릭 {max_retry}번 실패", "ERROR")
+        return False
+
+    def _wait_for_more_page_load(self):
+        """템플릿 클릭 후 더보기 페이지 로딩 대기"""
+        log("[대기] 더보기 페이지 로딩 대기 중...")
+        max_wait = 50  # 최대 50초
+
+        for _ in range(max_wait * 2):  # 0.5초 * 100 = 50초
+            xml = self.adb.get_screen_xml(force=True)
+            nx = self.adb.find_element_by_resource_id("nx_query", xml)
+
+            if nx.get("found"):
+                log("[성공] 더보기 페이지 로딩 완료!")
+                random_delay(1.0, 2.0)
+                return True
+            time.sleep(0.5)
+
+        log("[타임아웃] 페이지 로딩 50초 초과")
         return False
     
     # ========================================
