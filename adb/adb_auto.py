@@ -1550,57 +1550,86 @@ class NaverSearchAutomation:
         log("=" * 50)
         log("[2단계] 검색창 클릭")
         log("=" * 50)
-        
+
         max_retry = WAIT_CONFIG.get("max_element_retry", 30)
         clicks_before_reload = 5
-        
+        use_coordinate_fallback = False  # 좌표 기반 클릭 모드
+
         for retry in range(1, max_retry + 1):
             # 5번마다 메인 재이동 (CDP 동일)
             if retry > 1 and (retry - 1) % clicks_before_reload == 0:
                 log(f"[재이동] {clicks_before_reload}번 실패, 네이버 재이동...")
                 self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=1)
-            
+
             xml = self.adb.get_screen_xml(force=True)
-            
+
             # 검색창 찾기 (MM_SEARCH_FAKE)
             element = self.adb.find_element_by_resource_id("MM_SEARCH_FAKE", xml)
             if not element.get("found"):
                 element = self.adb.find_element_by_resource_id("query", xml)
-            
+
+            # 요소 못 찾으면 3번째 시도부터 좌표 기반으로 전환
             if not element.get("found"):
-                log(f"[재시도 {retry}/{max_retry}] 검색창 못 찾음")
-                time.sleep(0.5)
-                continue
-            
-            # 화면 범위 체크
-            cy = element.get("center_y", -1)
-            if cy < 0 or cy > self.adb.screen_height:
-                log(f"[재시도 {retry}/{max_retry}] 검색창이 화면 밖")
-                time.sleep(0.5)
-                continue
-            
-            # 검색창 클릭
-            if not self.adb.tap_element(element):
-                continue
-            
+                if retry >= 3 and not use_coordinate_fallback:
+                    log(f"[전환] 요소 찾기 실패, 좌표 기반 클릭으로 전환 ({self.browser})")
+                    use_coordinate_fallback = True
+
+                if not use_coordinate_fallback:
+                    log(f"[재시도 {retry}/{max_retry}] 검색창 못 찾음")
+                    time.sleep(0.5)
+                    continue
+
+            # 클릭 실행
+            if use_coordinate_fallback:
+                # 좌표 기반 클릭 (네이버 검색창 위치)
+                # 720x1440 기준 검색창 좌표, 해상도에 맞게 비율 조정
+                base_x, base_y = 360, 150  # 네이버 메인 검색창 대략 위치
+                scale_x = self.adb.screen_width / 720
+                scale_y = self.adb.screen_height / 1440
+                tap_x = int(base_x * scale_x)
+                tap_y = int(base_y * scale_y)
+                log(f"[좌표 클릭] ({tap_x}, {tap_y})")
+                self.adb.tap(tap_x, tap_y)
+            else:
+                # 화면 범위 체크
+                cy = element.get("center_y", -1)
+                if cy < 0 or cy > self.adb.screen_height:
+                    log(f"[재시도 {retry}/{max_retry}] 검색창이 화면 밖")
+                    time.sleep(0.5)
+                    continue
+
+                # 검색창 클릭
+                if not self.adb.tap_element(element):
+                    continue
+
             log(f"[클릭 {retry}/{max_retry}] 검색 모드 확인 중...")
             time.sleep(0.8)
-            
-            # 검색 모드 전환 확인 (키보드가 떴는지)
+
+            # 검색 모드 전환 확인
             xml = self.adb.get_screen_xml(force=True)
+
+            # 요소로 확인 시도
             query = self.adb.find_element_by_resource_id("query", xml)
-            
             if query.get("found"):
                 qy = query.get("center_y", -1)
                 if 0 <= qy <= self.adb.screen_height:
                     log("[성공] 검색 모드 전환됨!")
-                    # 입력창 한번 더 클릭 (포커스)
                     self.adb.tap_element(query)
                     time.sleep(0.3)
                     return True
-            
+
+            # 좌표 모드일 때: 텍스트로 검색 모드 확인
+            if use_coordinate_fallback:
+                if xml and ("검색어를 입력" in xml or "검색" in xml.lower()):
+                    log("[성공] 검색 모드 전환됨! (좌표 기반)")
+                    # 입력창 위치 클릭 (검색 모드에서 입력창은 상단)
+                    tap_y_input = int(100 * scale_y)
+                    self.adb.tap(tap_x, tap_y_input)
+                    time.sleep(0.3)
+                    return True
+
             time.sleep(0.5)
-        
+
         log(f"[실패] 검색창 클릭 {max_retry}번 실패", "ERROR")
         return False
     
