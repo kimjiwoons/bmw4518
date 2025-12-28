@@ -2117,8 +2117,10 @@ class NaverSearchAutomation:
                 browser_viewport_height = result.get("viewport_height", 800)
 
                 # 브라우저 주소창 오프셋 (브라우저 좌표 → 화면 좌표)
-                # 삼성브라우저: 상태바(~25px)만 고려, 주소창은 뷰포트에 포함됨
-                browser_offset = 25  # 상태바 높이만
+                # 삼성브라우저: 뷰포트가 전체 화면 기준, offset 거의 불필요
+                # 테스트: offset 25 → 카페탭 클릭 (40px 아래로 틀어짐)
+                # 수정: offset 0 또는 음수 필요
+                browser_offset = 0
                 screen_y = browser_y + browser_offset
 
                 # MobileCDP 좌표 → ADBController 형식으로 변환 (화면 좌표로!)
