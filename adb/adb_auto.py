@@ -470,22 +470,24 @@ class MobileCDP:
 
         try:
             # JavaScript로 요소 찾기 (DOM 읽기만 - 감지 불가)
-            viewport_check = "rect.top > 0 && rect.top < window.innerHeight &&" if viewport_only else ""
+            # PC CDP와 동일한 필터 적용: 텍스트 길이 < 50, 높이 < 150
+            viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
             js_code = f'''
             (function() {{
-                var elements = document.querySelectorAll('{tag}');
+                var elements = document.querySelectorAll('*');
                 var viewportHeight = window.innerHeight;
                 for (var el of elements) {{
-                    if (el.textContent && el.textContent.includes('{text}')) {{
+                    var txt = el.textContent ? el.textContent.trim() : '';
+                    if (txt.includes('{text}') && txt.length < 50) {{
                         var rect = el.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
+                        if (rect.width > 50 && rect.height > 0 && rect.height < 150 && {viewport_check} true) {{
                             return {{
                                 found: true,
                                 x: Math.round(rect.left + rect.width / 2),
                                 y: Math.round(rect.top + rect.height / 2),
                                 width: rect.width,
                                 height: rect.height,
-                                text: el.textContent.substring(0, 50),
+                                text: txt.substring(0, 50),
                                 in_viewport: rect.top > 0 && rect.bottom < viewportHeight,
                                 viewport_height: viewportHeight
                             }};
