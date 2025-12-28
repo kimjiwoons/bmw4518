@@ -891,16 +891,37 @@ class ADBController:
     def connect(self):
         log(f"ADB 연결 시도: {self.adb_address}")
         result = self.run_adb(f"connect {self.adb_address}")
-        
+
         if result and ("connected" in result.lower() or "already" in result.lower()):
             log("ADB 연결 성공!")
             if self.login_code:
                 log(f"GeeLark 로그인: {self.login_code}")
                 self.shell(f"glogin {self.login_code}")
                 time.sleep(1)
+
+            # 실제 화면 크기 자동 감지
+            self._detect_screen_size()
             return True
         log(f"ADB 연결 실패: {result}", "ERROR")
         return False
+
+    def _detect_screen_size(self):
+        """ADB에서 실제 화면 크기 자동 감지"""
+        try:
+            result = self.shell("wm size")
+            if result:
+                # "Physical size: 720x1440" 형식 파싱
+                match = re.search(r'(\d+)x(\d+)', result)
+                if match:
+                    width = int(match.group(1))
+                    height = int(match.group(2))
+                    self.screen_width = width
+                    self.screen_height = height
+                    log(f"[ADB] 화면 크기 감지: {width}x{height}")
+                    return
+            log(f"[ADB] 화면 크기 감지 실패, 기본값 사용: {self.screen_width}x{self.screen_height}", "WARN")
+        except Exception as e:
+            log(f"[ADB] 화면 크기 감지 오류: {e}", "ERROR")
     
     # ──────────────────────────────────────────
     # 터치
@@ -1131,22 +1152,27 @@ class ADBController:
         return result
     
     def _tap_key(self, key):
-        """키보드 키 탭"""
+        """키보드 키 탭 - 화면 크기에 맞게 비율 계산"""
         if key not in KEYBOARD_LAYOUT:
             log(f"[경고] 키 없음: {key}")
             return
-        
+
+        # 기준 화면 크기 (KEYBOARD_LAYOUT 좌표 기준)
+        base_width, base_height = 720, 1440
+        scale_x = self.screen_width / base_width
+        scale_y = self.screen_height / base_height
+
         coords = KEYBOARD_LAYOUT[key]
-        
+
         if coords.get('shift'):
             shift_coords = KEYBOARD_LAYOUT['shift']
-            sx = shift_coords['x'] + random.randint(-5, 5)
-            sy = shift_coords['y'] + random.randint(-3, 3)
+            sx = int(shift_coords['x'] * scale_x) + random.randint(-5, 5)
+            sy = int(shift_coords['y'] * scale_y) + random.randint(-3, 3)
             self.shell(f"input tap {sx} {sy}")
             time.sleep(random.uniform(0.05, 0.1))
-        
-        x = coords['x'] + random.randint(-8, 8)
-        y = coords['y'] + random.randint(-5, 5)
+
+        x = int(coords['x'] * scale_x) + random.randint(-8, 8)
+        y = int(coords['y'] * scale_y) + random.randint(-5, 5)
         self.shell(f"input tap {x} {y}")
     
     # ──────────────────────────────────────────
@@ -1487,13 +1513,21 @@ class ADBController:
     
     def click_search_button(self):
         """검색 버튼 클릭 - 키보드 검색 버튼 우선"""
-        
-        # 1순위: 키보드의 검색 버튼 (Gboard 우측 하단) - 가장 확실함
-        search_key = KEYBOARD_LAYOUT.get('search')
-        if search_key:
-            log(f"키보드 검색 버튼: ({search_key['x']}, {search_key['y']})")
-            self.tap(search_key['x'], search_key['y'], randomize=True)
-            return True
+
+        # 1순위: 키보드의 검색 버튼 - 화면 크기에 맞게 비율 계산
+        # 기준값: 720x1440 화면에서 (655, 1302) - 실측값
+        base_x, base_y = 655, 1302
+        base_width, base_height = 720, 1440
+
+        scale_x = self.screen_width / base_width
+        scale_y = self.screen_height / base_height
+
+        tap_x = int(base_x * scale_x)
+        tap_y = int(base_y * scale_y)
+
+        log(f"키보드 검색 버튼: ({tap_x}, {tap_y}) [화면: {self.screen_width}x{self.screen_height}]")
+        self.tap(tap_x, tap_y, randomize=True)
+        return True
         
         # 2순위: UI에서 검색 버튼 찾기 (화면 오른쪽만)
         xml = self.get_screen_xml(force=True)
