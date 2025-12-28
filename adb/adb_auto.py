@@ -2620,11 +2620,86 @@ class NaverSearchAutomation:
         log("=" * 50)
         log("[5단계] '검색결과 더보기' 찾기")
         log("=" * 50)
-        
+
         target = NAVER_CONFIG.get("target_text", "검색결과 더보기")
         max_scrolls = NAVER_CONFIG.get("max_scrolls", 50)
         short_scroll = int(self.adb.screen_height * 0.3)
-        
+
+        # ========================================
+        # 삼성 브라우저: CDP 없이 순수 ADB + 템플릿 매칭
+        # ========================================
+        if self.browser == "samsung" and TEMPLATE_MATCHING_AVAILABLE:
+            log("[5단계] 삼성 브라우저 - 순수 ADB + 템플릿 매칭 모드")
+
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            template_path = os.path.join(script_dir, "template_more.png")
+
+            if not os.path.exists(template_path):
+                log(f"[ERROR] 템플릿 파일 없음: {template_path}", "ERROR")
+                return None
+
+            # 1단계: PC에서 계산된 스크롤 횟수만큼 스크롤
+            if self.cdp_info and self.cdp_info.get("more_scroll_count", 0) > 0:
+                scroll_count = self.cdp_info["more_scroll_count"]
+                log(f"[5단계] 계산된 스크롤 횟수: {scroll_count}번")
+            else:
+                scroll_count = 15  # 기본값
+                log(f"[5단계] 스크롤 횟수 기본값 사용: {scroll_count}번")
+
+            # 스크롤 오차 초기화
+            self.adb.reset_scroll_debt()
+
+            # 스크롤 실행
+            for i in range(scroll_count):
+                self.adb.scroll_down(compensated=True)
+
+                # 읽기 멈춤 (확률적)
+                if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
+                    pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
+                    log(f"읽기 멈춤: {pause:.1f}초")
+                    time.sleep(pause)
+                else:
+                    time.sleep(random.uniform(0.1, 0.2))
+
+                if (i + 1) % 10 == 0:
+                    log(f"[5단계] 스크롤 {i + 1}/{scroll_count}...")
+
+            log(f"[5단계] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
+
+            # 2단계: 템플릿 매칭으로 찾기
+            log("[5단계] 템플릿 매칭으로 '검색결과 더보기' 찾기...")
+            result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+
+            if result.get("found"):
+                log(f"[발견] 템플릿 매칭 성공! 위치: ({result['x']}, {result['y']})")
+                return result
+
+            # 3단계: 못 찾으면 위로 200~300px씩 스크롤하면서 템플릿 비교
+            log("[5단계] 템플릿 못 찾음, 위로 스크롤하면서 찾기...")
+            max_up_scrolls = 30  # 최대 30번 위로 스크롤
+
+            for i in range(max_up_scrolls):
+                # 200~300px 랜덤 스크롤
+                scroll_amount = random.randint(200, 300)
+                self.adb.scroll_up(scroll_amount)
+                time.sleep(random.uniform(0.3, 0.5))
+
+                # 템플릿 매칭
+                result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+
+                if result.get("found"):
+                    log(f"[발견] 템플릿 매칭 성공! 위치: ({result['x']}, {result['y']}) (스크롤 {i+1}번 후)")
+                    return result
+
+                if (i + 1) % 5 == 0:
+                    log(f"[5단계] 위로 스크롤 {i + 1}/{max_up_scrolls}...")
+
+            log(f"[실패] '{target}' 못 찾음 (템플릿 매칭 실패)", "ERROR")
+            return None
+
+        # ========================================
+        # 다른 브라우저: 기존 CDP 방식
+        # ========================================
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("more_scroll_count", 0) > 0:
             cdp_scroll = self.cdp_info["more_scroll_count"]
