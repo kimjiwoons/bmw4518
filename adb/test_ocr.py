@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OCR 테스트 스크립트
+OCR 테스트 스크립트 (pytesseract 버전)
 """
 
 import subprocess
@@ -9,24 +9,25 @@ import sys
 import time
 
 def log(msg):
-    """즉시 출력 (버퍼 flush)"""
     print(msg, flush=True)
 
 log("[1] 스크립트 시작")
 
-# OCR 관련
+# pytesseract
 try:
-    log("[2] easyocr import 중...")
-    import easyocr
-    log("[3] numpy import 중...")
-    import numpy as np
-    log("[4] PIL import 중...")
+    log("[2] pytesseract import 중...")
+    import pytesseract
+    log("[3] PIL import 중...")
     from PIL import Image
     import io
-    log("[OK] 모든 패키지 로드 완료")
+    log("[OK] 패키지 로드 완료")
 except ImportError as e:
     log(f"[ERROR] 패키지 오류: {e}")
+    log("설치: pip install pytesseract pillow")
     sys.exit(1)
+
+# Tesseract 경로 설정 (Windows)
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # 설정
 from config import PHONES, ADB_CONFIG
@@ -61,13 +62,9 @@ def tap(x, y):
     subprocess.run(cmd, shell=True)
 
 # ========================================
-# OCR
+# OCR (pytesseract)
 # ========================================
-OCR_READER = None
-
 def do_ocr_test(target_text, do_click=False):
-    global OCR_READER
-
     log("=" * 50)
     log(f"[TEST] 찾을 텍스트: '{target_text}'")
     log(f"[TEST] 클릭 여부: {do_click}")
@@ -81,54 +78,50 @@ def do_ocr_test(target_text, do_click=False):
             log("[FAIL] 스크린샷 실패")
             return
 
-        # 2. 리사이즈 (메모리 부족 방지: 30%)
-        log("[STEP2] 리사이즈...")
-        scale = 0.3
-        orig = screenshot.size
-        new_size = (int(orig[0] * scale), int(orig[1] * scale))
-        resized = screenshot.resize(new_size, Image.LANCZOS)
-        log(f"[STEP2] {orig} → {new_size} (scale={scale})")
+        # 2. RGB 변환 (RGBA → RGB)
+        log("[STEP2] RGB 변환...")
+        if screenshot.mode == 'RGBA':
+            screenshot = screenshot.convert('RGB')
+        log(f"[STEP2] mode: {screenshot.mode}, size: {screenshot.size}")
 
-        # 3. OCR 초기화
-        log("[STEP3] OCR 초기화...")
-        if OCR_READER is None:
-            log("[STEP3] EasyOCR Reader 생성 중... (오래 걸림)")
-            OCR_READER = easyocr.Reader(['ko', 'en'], gpu=False)
-            log("[STEP3] Reader 생성 완료!")
-        else:
-            log("[STEP3] 기존 Reader 사용")
+        # 3. OCR 실행 (한글+영어)
+        log("[STEP3] pytesseract OCR 실행...")
+        # 박스 정보 포함해서 OCR
+        data = pytesseract.image_to_data(screenshot, lang='kor+eng', output_type=pytesseract.Output.DICT)
+        log(f"[STEP3] 완료! 감지된 항목: {len(data['text'])}개")
 
-        # 4. numpy 변환
-        log("[STEP4] numpy 변환...")
-        img_array = np.array(resized)
-        log(f"[STEP4] shape: {img_array.shape}, dtype: {img_array.dtype}")
-
-        # 5. OCR 실행
-        log("[STEP5] readtext 실행... (시간 소요)")
-        results = OCR_READER.readtext(img_array)
-        log(f"[STEP5] 완료! 감지된 텍스트: {len(results)}개")
-
-        # 6. 결과 출력
-        log("[STEP6] 결과 분석...")
+        # 4. 결과 분석
+        log("[STEP4] 결과 분석...")
         found = None
-        for i, (bbox, text, conf) in enumerate(results):
-            x1, y1 = bbox[0]
-            x2, y2 = bbox[2]
-            cx = int((x1 + x2) / 2 / scale)
-            cy = int((y1 + y2) / 2 / scale)
+        n_boxes = len(data['text'])
+
+        for i in range(n_boxes):
+            text = data['text'][i].strip()
+            if not text:
+                continue
+
+            x = data['left'][i]
+            y = data['top'][i]
+            w = data['width'][i]
+            h = data['height'][i]
+            conf = int(data['conf'][i])
+
+            cx = x + w // 2
+            cy = y + h // 2
 
             mark = "★" if target_text in text else " "
-            log(f"  [{mark}] #{i}: '{text[:25]}' ({cx},{cy}) conf={conf:.2f}")
+            if conf > 0:  # 신뢰도가 있는 것만 출력
+                log(f"  [{mark}] '{text[:20]}' ({cx},{cy}) conf={conf}")
 
             if target_text in text and found is None:
                 found = {"x": cx, "y": cy, "text": text, "conf": conf}
 
-        # 7. 최종 결과
+        # 5. 최종 결과
         log("=" * 50)
         if found:
             log(f"[SUCCESS] '{target_text}' 발견!")
             log(f"  좌표: ({found['x']}, {found['y']})")
-            log(f"  신뢰도: {found['conf']:.2f}")
+            log(f"  신뢰도: {found['conf']}")
 
             if do_click:
                 log("[CLICK] 클릭 실행...")
