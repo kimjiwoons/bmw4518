@@ -1553,7 +1553,13 @@ class NaverSearchAutomation:
 
         max_retry = WAIT_CONFIG.get("max_element_retry", 30)
         clicks_before_reload = 5
-        use_coordinate_fallback = False  # 좌표 기반 클릭 모드
+
+        # 요소 기반 안 되는 브라우저는 처음부터 좌표 모드
+        coordinate_only_browsers = ["samsung", "firefox", "opera", "edge"]
+        use_coordinate_fallback = self.browser in coordinate_only_browsers
+
+        if use_coordinate_fallback:
+            log(f"[좌표 모드] {self.browser} 브라우저는 좌표 기반 클릭 사용")
 
         for retry in range(1, max_retry + 1):
             # 5번마다 메인 재이동 (CDP 동일)
@@ -1561,34 +1567,34 @@ class NaverSearchAutomation:
                 log(f"[재이동] {clicks_before_reload}번 실패, 네이버 재이동...")
                 self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=1)
 
-            xml = self.adb.get_screen_xml(force=True)
+            # 좌표 모드가 아니면 요소 찾기 시도
+            element = None
+            if not use_coordinate_fallback:
+                xml = self.adb.get_screen_xml(force=True)
+                element = self.adb.find_element_by_resource_id("MM_SEARCH_FAKE", xml)
+                if not element.get("found"):
+                    element = self.adb.find_element_by_resource_id("query", xml)
 
-            # 검색창 찾기 (MM_SEARCH_FAKE)
-            element = self.adb.find_element_by_resource_id("MM_SEARCH_FAKE", xml)
-            if not element.get("found"):
-                element = self.adb.find_element_by_resource_id("query", xml)
-
-            # 요소 못 찾으면 3번째 시도부터 좌표 기반으로 전환
-            if not element.get("found"):
-                if retry >= 3 and not use_coordinate_fallback:
-                    log(f"[전환] 요소 찾기 실패, 좌표 기반 클릭으로 전환 ({self.browser})")
-                    use_coordinate_fallback = True
-
-                if not use_coordinate_fallback:
-                    log(f"[재시도 {retry}/{max_retry}] 검색창 못 찾음")
-                    time.sleep(0.5)
-                    continue
+                # 요소 못 찾으면 3번째 시도부터 좌표 기반으로 전환
+                if not element.get("found"):
+                    if retry >= 3:
+                        log(f"[전환] 요소 찾기 실패, 좌표 기반 클릭으로 전환")
+                        use_coordinate_fallback = True
+                    else:
+                        log(f"[재시도 {retry}/{max_retry}] 검색창 못 찾음")
+                        time.sleep(0.5)
+                        continue
 
             # 클릭 실행
+            scale_x = self.adb.screen_width / 720
+            scale_y = self.adb.screen_height / 1440
+
             if use_coordinate_fallback:
                 # 좌표 기반 클릭 (네이버 검색창 위치)
-                # 720x1440 기준 검색창 좌표, 해상도에 맞게 비율 조정
                 base_x, base_y = 156, 318  # 네이버 메인 검색창 (실측값)
-                scale_x = self.adb.screen_width / 720
-                scale_y = self.adb.screen_height / 1440
                 tap_x = int(base_x * scale_x)
                 tap_y = int(base_y * scale_y)
-                log(f"[좌표 클릭] ({tap_x}, {tap_y})")
+                log(f"[좌표 클릭] 검색창 ({tap_x}, {tap_y})")
                 self.adb.tap(tap_x, tap_y)
             else:
                 # 화면 범위 체크
@@ -1597,13 +1603,12 @@ class NaverSearchAutomation:
                     log(f"[재시도 {retry}/{max_retry}] 검색창이 화면 밖")
                     time.sleep(0.5)
                     continue
-
                 # 검색창 클릭
                 if not self.adb.tap_element(element):
                     continue
 
             log(f"[클릭 {retry}/{max_retry}] 검색 모드 확인 중...")
-            time.sleep(0.8)
+            time.sleep(1.0)
 
             # 검색 모드 전환 확인
             xml = self.adb.get_screen_xml(force=True)
@@ -1618,13 +1623,16 @@ class NaverSearchAutomation:
                     time.sleep(0.3)
                     return True
 
-            # 좌표 모드일 때: 클릭 2번 후 성공으로 간주 (요소 확인 불가)
+            # 좌표 모드일 때: 검색 입력창 클릭 후 성공
             if use_coordinate_fallback:
-                coordinate_clicks = retry - 2  # 좌표 모드 진입 후 클릭 횟수
-                if coordinate_clicks >= 2:
-                    log("[성공] 검색 모드 전환됨! (좌표 기반, 클릭 완료)")
-                    time.sleep(0.5)
-                    return True
+                # 검색 모드에서 입력창은 상단에 위치 (y=100 근처)
+                input_y = int(100 * scale_y)
+                input_x = int(360 * scale_x)  # 화면 중앙
+                log(f"[좌표 클릭] 입력창 ({input_x}, {input_y})")
+                self.adb.tap(input_x, input_y)
+                time.sleep(0.5)
+                log("[성공] 검색 모드 전환됨! (좌표 기반)")
+                return True
 
             time.sleep(0.5)
 
