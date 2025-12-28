@@ -22,6 +22,18 @@ try:
 except ImportError:
     CDP_AVAILABLE = False
 
+# OCR 관련 (선택적)
+try:
+    import easyocr
+    import numpy as np
+    from PIL import Image
+    import io
+    OCR_AVAILABLE = True
+    OCR_READER = None  # 지연 초기화
+except ImportError:
+    OCR_AVAILABLE = False
+    OCR_READER = None
+
 import os
 import signal
 import atexit
@@ -1426,7 +1438,92 @@ class ADBController:
             log(f"[ADB] 화면 크기 감지 실패, 기본값 사용: {self.screen_width}x{self.screen_height}", "WARN")
         except Exception as e:
             log(f"[ADB] 화면 크기 감지 오류: {e}", "ERROR")
-    
+
+    # ──────────────────────────────────────────
+    # 스크린샷 + OCR
+    # ──────────────────────────────────────────
+    def take_screenshot(self):
+        """스크린샷을 찍고 PIL Image로 반환"""
+        try:
+            # 스크린샷을 바이너리로 직접 가져오기
+            cmd = f'{self.adb_path} -s {self.adb_address} exec-out screencap -p'
+            result = subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
+            if result.returncode == 0 and result.stdout:
+                image = Image.open(io.BytesIO(result.stdout))
+                log(f"[OCR] 스크린샷 촬영: {image.size}")
+                return image
+            log("[OCR] 스크린샷 실패", "ERROR")
+            return None
+        except Exception as e:
+            log(f"[OCR] 스크린샷 오류: {e}", "ERROR")
+            return None
+
+    def find_text_by_ocr(self, target_text, screenshot=None):
+        """OCR로 텍스트 찾아서 화면 좌표 반환
+
+        Args:
+            target_text: 찾을 텍스트
+            screenshot: PIL Image (없으면 새로 촬영)
+
+        Returns:
+            dict: {"found": True, "x": 221, "y": 244, "confidence": 0.95, ...}
+        """
+        global OCR_READER
+
+        if not OCR_AVAILABLE:
+            log("[OCR] easyocr 미설치", "ERROR")
+            return {"found": False}
+
+        try:
+            # OCR 리더 초기화 (최초 1회)
+            if OCR_READER is None:
+                log("[OCR] EasyOCR 초기화 중... (최초 1회, 시간 소요)")
+                OCR_READER = easyocr.Reader(['ko', 'en'], gpu=False)
+                log("[OCR] EasyOCR 초기화 완료")
+
+            # 스크린샷 촬영
+            if screenshot is None:
+                screenshot = self.take_screenshot()
+            if screenshot is None:
+                return {"found": False}
+
+            # PIL Image → numpy array
+            img_array = np.array(screenshot)
+
+            # OCR 실행
+            results = OCR_READER.readtext(img_array)
+
+            # 결과에서 타겟 텍스트 찾기
+            for (bbox, text, confidence) in results:
+                if target_text in text:
+                    # bbox: [[x1,y1], [x2,y1], [x2,y2], [x1,y2]]
+                    x1, y1 = bbox[0]
+                    x2, y2 = bbox[2]
+                    center_x = int((x1 + x2) / 2)
+                    center_y = int((y1 + y2) / 2)
+
+                    log(f"[OCR] '{target_text}' 발견 → ({center_x}, {center_y}) conf={confidence:.2f}")
+                    return {
+                        "found": True,
+                        "x": center_x,
+                        "y": center_y,
+                        "center_x": center_x,
+                        "center_y": center_y,
+                        "width": int(x2 - x1),
+                        "height": int(y2 - y1),
+                        "bounds": (int(x1), int(y1), int(x2), int(y2)),
+                        "confidence": confidence,
+                        "text": text,
+                        "source": "ocr"
+                    }
+
+            log(f"[OCR] '{target_text}' 못 찾음 (감지된 텍스트 {len(results)}개)")
+            return {"found": False}
+
+        except Exception as e:
+            log(f"[OCR] 오류: {e}", "ERROR")
+            return {"found": False}
+
     # ──────────────────────────────────────────
     # 터치
     # ──────────────────────────────────────────
@@ -2580,46 +2677,57 @@ class NaverSearchAutomation:
         log("=" * 50)
         log("[6단계] '검색결과 더보기' 클릭")
         log("=" * 50)
-        
+
         max_retry = NAVER_CONFIG.get("step6_click_retry", 5)
         target = NAVER_CONFIG.get("target_text", "검색결과 더보기")
-        
+
         # 클릭 전 안정화 대기 (CDP 동일)
         random_delay(0.5, 1.0)
-        
+
+        # 삼성 브라우저: OCR로 정확한 좌표 찾기 (CDP 좌표 오차 문제 해결)
+        if self.browser == "samsung" and OCR_AVAILABLE:
+            log("[OCR] 삼성 브라우저 - OCR로 정확한 좌표 찾기")
+            ocr_element = self.adb.find_text_by_ocr(target)
+            if ocr_element.get("found"):
+                element = ocr_element
+                log(f"[OCR] '{target}' 좌표: ({element['x']}, {element['y']})")
+
         for click_try in range(1, max_retry + 1):
             time.sleep(random.uniform(0.3, 0.6))
-            
+
             self.adb.tap_element(element)
             log(f"[클릭 {click_try}/{max_retry}] 로딩 대기...")
-            
+
             # 10초 단위로 체크하면서 재클릭 (CDP 동일: 10초 * 5회 = 50초)
             max_reclick = 5
-            
+
             for reclick_try in range(max_reclick):
                 # 10초 대기 (0.5초 * 20)
                 for _ in range(20):
                     xml = self.adb.get_screen_xml(force=True)
                     nx = self.adb.find_element_by_resource_id("nx_query", xml)
-                    
+
                     if nx.get("found"):
                         log("[성공] 더보기 페이지 로딩 완료!")
                         random_delay(1.0, 2.0)
                         return True
                     time.sleep(0.5)
-                
+
                 # URL 안 바뀌면 재클릭 (CDP 동일)
                 if reclick_try < max_reclick - 1:
                     log(f"[재클릭] 페이지 변경 없음, 재클릭 {reclick_try + 2}/{max_reclick}...")
-                    # 요소 다시 찾아서 클릭 (하이브리드: CDP 우선)
-                    element = self._find_element_by_text_hybrid(target, check_viewport=False)
+                    # 삼성 브라우저: OCR로 다시 찾기
+                    if self.browser == "samsung" and OCR_AVAILABLE:
+                        element = self.adb.find_text_by_ocr(target)
+                    else:
+                        element = self._find_element_by_text_hybrid(target, check_viewport=False)
                     if element.get("found"):
                         self.adb.tap_element(element)
-            
+
             # 타임아웃
             log(f"[타임아웃] 페이지 로딩 50초 초과")
             return False
-        
+
         log(f"[실패] 더보기 클릭 {max_retry}번 실패", "ERROR")
         return False
     
