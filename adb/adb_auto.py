@@ -2810,9 +2810,28 @@ class NaverSearchAutomation:
     def _wait_for_more_page_load(self):
         """템플릿 클릭 후 더보기 페이지 로딩 대기"""
         log("[대기] 더보기 페이지 로딩 대기 중...")
-        max_wait = 50  # 최대 50초
 
-        for _ in range(max_wait * 2):  # 0.5초 * 100 = 50초
+        # 삼성 브라우저: 템플릿이 사라졌는지 확인 (더보기 버튼 없으면 페이지 전환됨)
+        if self.browser == "samsung" and TEMPLATE_MATCHING_AVAILABLE:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            template_path = os.path.join(script_dir, "template_more.png")
+
+            time.sleep(2.0)  # 페이지 전환 대기
+
+            for check in range(10):  # 최대 5초 (0.5초 * 10)
+                result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+                if not result.get("found"):
+                    log("[성공] 더보기 버튼 사라짐 - 페이지 전환 완료!")
+                    random_delay(1.0, 2.0)
+                    return True
+                time.sleep(0.5)
+
+            log("[실패] 더보기 버튼이 아직 있음 - 클릭 안 먹힘?", "WARNING")
+            return False
+
+        # 기존 방식: nx_query 찾기
+        max_wait = 50
+        for _ in range(max_wait * 2):
             xml = self.adb.get_screen_xml(force=True)
             nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
@@ -2824,7 +2843,7 @@ class NaverSearchAutomation:
 
         log("[타임아웃] 페이지 로딩 50초 초과")
         return False
-    
+
     # ========================================
     # 7단계: 더보기 페이지에서 도메인 찾기
     # ========================================
