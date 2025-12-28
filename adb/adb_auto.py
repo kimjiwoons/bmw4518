@@ -479,6 +479,8 @@ class MobileCDP:
             (function() {{
                 var elements = document.querySelectorAll('*');
                 var viewportHeight = window.innerHeight;
+                var candidates = [];
+
                 for (var el of elements) {{
                     var txt = el.textContent ? el.textContent.trim() : '';
                     if ({match_condition}) {{
@@ -498,7 +500,15 @@ class MobileCDP:
                                         el.onclick !== null ||
                                         style.cursor === 'pointer';
                         if (rect.width > 50 && rect.height > 0 && rect.height < 150 && {viewport_check} true) {{
-                            return {{
+                            // 우선순위: A > BUTTON > 기타 clickable > DIV
+                            var priority = 0;
+                            if (el.tagName === 'A') priority = 100;
+                            else if (el.tagName === 'BUTTON') priority = 90;
+                            else if (isClickable) priority = 50;
+                            else priority = 10;
+
+                            candidates.push({{
+                                priority: priority,
                                 found: true,
                                 x: Math.round(rect.left + rect.width / 2),
                                 y: Math.round(rect.top + rect.height / 2),
@@ -509,9 +519,15 @@ class MobileCDP:
                                 viewport_height: viewportHeight,
                                 clickable: isClickable,
                                 tag: el.tagName
-                            }};
+                            }});
                         }}
                     }}
+                }}
+
+                // 우선순위가 높은 요소 반환 (A > BUTTON > clickable > DIV)
+                if (candidates.length > 0) {{
+                    candidates.sort(function(a, b) {{ return b.priority - a.priority; }});
+                    return candidates[0];
                 }}
                 return {{found: false}};
             }})()
