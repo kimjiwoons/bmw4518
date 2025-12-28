@@ -89,61 +89,76 @@ def init_ocr():
 def find_text_ocr(target_text, do_click=False):
     """OCR로 텍스트 찾기"""
 
-    # 1. 스크린샷
-    screenshot = take_screenshot()
-    if not screenshot:
-        return None
+    try:
+        # 1. 스크린샷
+        screenshot = take_screenshot()
+        if not screenshot:
+            return None
 
-    # 2. 리사이즈 (메모리 절약)
-    original_size = screenshot.size
-    scale = 0.5
-    new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
-    screenshot_resized = screenshot.resize(new_size, Image.LANCZOS)
-    print(f"[INFO] 리사이즈: {original_size} → {new_size}")
+        # 2. 리사이즈 (메모리 절약)
+        original_size = screenshot.size
+        scale = 0.5
+        new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
+        screenshot_resized = screenshot.resize(new_size, Image.LANCZOS)
+        print(f"[INFO] 리사이즈: {original_size} → {new_size}")
 
-    # 3. OCR 실행
-    print(f"[INFO] OCR 실행 중... ('{target_text}' 찾는 중)")
-    reader = init_ocr()
-    img_array = np.array(screenshot_resized)
-    results = reader.readtext(img_array)
+        # 3. OCR 실행
+        print(f"[INFO] OCR 실행 중... ('{target_text}' 찾는 중)")
+        reader = init_ocr()
 
-    print(f"[INFO] 감지된 텍스트 {len(results)}개:")
+        print("[INFO] numpy 변환 중...")
+        img_array = np.array(screenshot_resized)
+        print(f"[INFO] 이미지 배열 크기: {img_array.shape}")
 
-    found = None
-    for i, (bbox, text, confidence) in enumerate(results):
-        # 좌표 계산 (원본 크기로 복원)
-        x1, y1 = bbox[0]
-        x2, y2 = bbox[2]
-        center_x = int((x1 + x2) / 2 / scale)
-        center_y = int((y1 + y2) / 2 / scale)
+        print("[INFO] readtext 실행 중...")
+        results = reader.readtext(img_array)
+        print(f"[OK] OCR 완료!")
 
-        # 매칭 여부
-        match = "★" if target_text in text else " "
-        print(f"  [{match}] #{i}: '{text[:30]}' → ({center_x}, {center_y}) conf={confidence:.2f}")
+        print(f"[INFO] 감지된 텍스트 {len(results)}개:")
 
-        if target_text in text and found is None:
-            found = {
-                "text": text,
-                "x": center_x,
-                "y": center_y,
-                "confidence": confidence
-            }
+        found = None
+        for i, (bbox, text, confidence) in enumerate(results):
+            # 좌표 계산 (원본 크기로 복원)
+            x1, y1 = bbox[0]
+            x2, y2 = bbox[2]
+            center_x = int((x1 + x2) / 2 / scale)
+            center_y = int((y1 + y2) / 2 / scale)
 
-    # 4. 결과
-    if found:
-        print(f"\n[FOUND] '{target_text}' 발견!")
-        print(f"  좌표: ({found['x']}, {found['y']})")
-        print(f"  신뢰도: {found['confidence']:.2f}")
+            # 매칭 여부
+            match = "★" if target_text in text else " "
+            print(f"  [{match}] #{i}: '{text[:30]}' → ({center_x}, {center_y}) conf={confidence:.2f}")
 
-        if do_click:
-            print(f"\n[CLICK] 클릭 실행...")
-            time.sleep(0.5)
-            tap(found['x'], found['y'])
-            print("[OK] 클릭 완료!")
+            if target_text in text and found is None:
+                found = {
+                    "text": text,
+                    "x": center_x,
+                    "y": center_y,
+                    "confidence": confidence
+                }
 
-        return found
-    else:
-        print(f"\n[NOT FOUND] '{target_text}' 못 찾음")
+        # 4. 결과
+        if found:
+            print(f"\n[FOUND] '{target_text}' 발견!")
+            print(f"  좌표: ({found['x']}, {found['y']})")
+            print(f"  신뢰도: {found['confidence']:.2f}")
+
+            if do_click:
+                print(f"\n[CLICK] 클릭 실행...")
+                time.sleep(0.5)
+                tap(found['x'], found['y'])
+                print("[OK] 클릭 완료!")
+
+            return found
+        else:
+            print(f"\n[NOT FOUND] '{target_text}' 못 찾음")
+            return None
+
+    except Exception as e:
+        print(f"[ERROR] OCR 오류 발생!")
+        print(f"[ERROR] 타입: {type(e).__name__}")
+        print(f"[ERROR] 내용: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ========================================
