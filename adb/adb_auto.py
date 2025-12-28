@@ -454,13 +454,14 @@ class MobileCDP:
 
         return {}
 
-    def find_element_by_text(self, text, tag="*", viewport_only=True):
+    def find_element_by_text(self, text, tag="*", viewport_only=True, exact_match=False):
         """텍스트로 요소 찾기 → 좌표 반환 (읽기 전용!)
 
         Args:
             text: 찾을 텍스트
             tag: 태그 필터 (기본: 모든 태그)
             viewport_only: True면 현재 뷰포트 안에 있는 요소만 반환
+            exact_match: True면 정확한 텍스트 매칭 (부모 요소 제외)
 
         Returns:
             dict: {"found": True, "x": 360, "y": 500, "text": "...", "in_viewport": True}
@@ -471,15 +472,21 @@ class MobileCDP:
         try:
             # JavaScript로 요소 찾기 (DOM 읽기만 - 감지 불가)
             # PC CDP와 동일한 필터 적용: 텍스트 길이 < 50, 높이 < 150
+            # exact_match: 정확한 매칭으로 부모 컨테이너 매칭 방지
             viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
+            match_condition = f"txt === '{text}'" if exact_match else f"txt.includes('{text}') && txt.length < 50"
             js_code = f'''
             (function() {{
                 var elements = document.querySelectorAll('*');
                 var viewportHeight = window.innerHeight;
                 for (var el of elements) {{
                     var txt = el.textContent ? el.textContent.trim() : '';
-                    if (txt.includes('{text}') && txt.length < 50) {{
+                    if ({match_condition}) {{
                         var rect = el.getBoundingClientRect();
+                        // 클릭 가능한 요소인지 확인
+                        var isClickable = el.tagName === 'A' || el.tagName === 'BUTTON' ||
+                                        el.onclick !== null ||
+                                        window.getComputedStyle(el).cursor === 'pointer';
                         if (rect.width > 50 && rect.height > 0 && rect.height < 150 && {viewport_check} true) {{
                             return {{
                                 found: true,
@@ -489,7 +496,8 @@ class MobileCDP:
                                 height: rect.height,
                                 text: txt.substring(0, 50),
                                 in_viewport: rect.top > 0 && rect.bottom < viewportHeight,
-                                viewport_height: viewportHeight
+                                viewport_height: viewportHeight,
+                                clickable: isClickable
                             }};
                         }}
                     }}
@@ -1995,12 +2003,13 @@ class NaverSearchAutomation:
                 self.mobile_cdp = None
                 log(f"[MobileCDP] 초기화 오류: {e}", "WARN")
 
-    def _find_element_by_text_hybrid(self, text, check_viewport=True):
+    def _find_element_by_text_hybrid(self, text, check_viewport=True, exact_match=False):
         """하이브리드 요소 찾기: MobileCDP 우선, 실패시 uiautomator
 
         Args:
             text: 찾을 텍스트
             check_viewport: 뷰포트 범위 체크 여부
+            exact_match: True면 정확한 텍스트 매칭 (부모 요소 매칭 방지)
 
         Returns:
             dict: {"found": True, "center_x": x, "center_y": y, ...}
@@ -2008,7 +2017,7 @@ class NaverSearchAutomation:
         # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
         if self.mobile_cdp and self.mobile_cdp.connected:
             # viewport_only=False: 위치 정보 필요하므로 모든 요소 검색
-            result = self.mobile_cdp.find_element_by_text(text, viewport_only=False)
+            result = self.mobile_cdp.find_element_by_text(text, viewport_only=False, exact_match=exact_match)
             if result.get("found"):
                 # MobileCDP 좌표는 브라우저 뷰포트 기준!
                 browser_y = result["y"]
@@ -2405,8 +2414,8 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
-            # 요소 찾기
-            element = self._find_element_by_text_hybrid(target, check_viewport=True)
+            # 요소 찾기 (exact_match=True: 정확한 매칭으로 부모 요소 제외)
+            element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
             if element.get("found"):
                 log(f"[발견] '{target}' y={element['center_y']}")
                 return element
@@ -2417,7 +2426,7 @@ class NaverSearchAutomation:
                 for _ in range(20):
                     self.adb.scroll_up(300)
                     time.sleep(0.3)
-                    element = self._find_element_by_text_hybrid(target, check_viewport=True)
+                    element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
                     if element.get("found"):
                         log(f"[발견] '{target}' y={element['center_y']}")
                         return element
@@ -2427,7 +2436,7 @@ class NaverSearchAutomation:
                 for _ in range(15):
                     self.adb.scroll_down(short_scroll)
                     time.sleep(0.3)
-                    element = self._find_element_by_text_hybrid(target, check_viewport=True)
+                    element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
                     if element.get("found"):
                         log(f"[발견] '{target}' y={element['center_y']}")
                         return element
@@ -2438,7 +2447,7 @@ class NaverSearchAutomation:
         # CDP 없으면 기존 방식 (매번 덤프) - 하이브리드로 요소 찾기
         log("[5단계] 기존 방식 (CDP 계산값 없음)")
         for scroll_count in range(max_scrolls):
-            element = self._find_element_by_text_hybrid(target, check_viewport=True)
+            element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
 
             if element.get("found"):
                 log(f"[발견] '{target}' y={element['center_y']} ({element.get('source', 'unknown')})")
