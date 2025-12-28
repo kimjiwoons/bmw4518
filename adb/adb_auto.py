@@ -454,31 +454,39 @@ class MobileCDP:
 
         return {}
 
-    def find_element_by_text(self, text, tag="*"):
+    def find_element_by_text(self, text, tag="*", viewport_only=True):
         """텍스트로 요소 찾기 → 좌표 반환 (읽기 전용!)
 
+        Args:
+            text: 찾을 텍스트
+            tag: 태그 필터 (기본: 모든 태그)
+            viewport_only: True면 현재 뷰포트 안에 있는 요소만 반환
+
         Returns:
-            dict: {"found": True, "x": 360, "y": 500, "text": "..."}
+            dict: {"found": True, "x": 360, "y": 500, "text": "...", "in_viewport": True}
         """
         if not self.connected:
             return {"found": False}
 
         try:
             # JavaScript로 요소 찾기 (DOM 읽기만 - 감지 불가)
+            viewport_check = "rect.top > 0 && rect.top < window.innerHeight &&" if viewport_only else ""
             js_code = f'''
             (function() {{
                 var elements = document.querySelectorAll('{tag}');
+                var viewportHeight = window.innerHeight;
                 for (var el of elements) {{
                     if (el.textContent && el.textContent.includes('{text}')) {{
                         var rect = el.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0) {{
+                        if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
                             return {{
                                 found: true,
                                 x: Math.round(rect.left + rect.width / 2),
                                 y: Math.round(rect.top + rect.height / 2),
                                 width: rect.width,
                                 height: rect.height,
-                                text: el.textContent.substring(0, 50)
+                                text: el.textContent.substring(0, 50),
+                                in_viewport: rect.top > 0 && rect.bottom < viewportHeight
                             }};
                         }}
                     }}
@@ -504,8 +512,12 @@ class MobileCDP:
             log(f"[MobileCDP] 요소 찾기 오류: {e}", "ERROR")
             return {"found": False}
 
-    def find_link_by_domain(self, domain):
+    def find_link_by_domain(self, domain, viewport_only=True):
         """도메인으로 링크 찾기 → 좌표 반환 (읽기 전용!)
+
+        Args:
+            domain: 찾을 도메인
+            viewport_only: True면 현재 뷰포트 안에 있는 링크만 반환
 
         Returns:
             dict: {"found": True, "x": 360, "y": 500, "href": "..."}
@@ -515,12 +527,14 @@ class MobileCDP:
 
         try:
             # 도메인 포함된 링크 찾기
+            viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
             js_code = f'''
             (function() {{
                 var links = document.querySelectorAll('a[href*="{domain}"]');
+                var viewportHeight = window.innerHeight;
                 for (var link of links) {{
                     var rect = link.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0 && rect.top > 0) {{
+                    if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
                         return {{
                             found: true,
                             x: Math.round(rect.left + rect.width / 2),
@@ -553,8 +567,12 @@ class MobileCDP:
             log(f"[MobileCDP] 링크 찾기 오류: {e}", "ERROR")
             return {"found": False}
 
-    def find_all_links_by_domain(self, domain):
+    def find_all_links_by_domain(self, domain, viewport_only=True):
         """도메인으로 모든 링크 찾기 → 좌표 목록 반환 (읽기 전용!)
+
+        Args:
+            domain: 찾을 도메인
+            viewport_only: True면 현재 뷰포트 안에 있는 링크만 반환
 
         Returns:
             list: [{"found": True, "x": 360, "y": 500, "href": "..."}, ...]
@@ -563,13 +581,15 @@ class MobileCDP:
             return []
 
         try:
+            viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
             js_code = f'''
             (function() {{
                 var links = document.querySelectorAll('a[href*="{domain}"]');
+                var viewportHeight = window.innerHeight;
                 var results = [];
                 for (var link of links) {{
                     var rect = link.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {{
+                    if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
                         results.push({{
                             found: true,
                             x: Math.round(rect.left + rect.width / 2),
@@ -1918,7 +1938,8 @@ class NaverSearchAutomation:
         """
         # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
         if self.mobile_cdp and self.mobile_cdp.connected:
-            result = self.mobile_cdp.find_element_by_text(text)
+            # viewport_only=False: 위치 정보 필요하므로 모든 요소 검색
+            result = self.mobile_cdp.find_element_by_text(text, viewport_only=False)
             if result.get("found"):
                 # MobileCDP 좌표 → ADBController 형식으로 변환
                 element = {
@@ -2318,14 +2339,33 @@ class NaverSearchAutomation:
                 return element
 
             # 못 찾으면 추가 스크롤 (덤프하며)
-            log("[5단계] 못 찾음, 추가 스크롤...")
-            for extra in range(10):
-                self.adb.scroll_down(short_scroll)
+            # 뷰포트 위에 있으면 (y < 0) 위로, 아니면 아래로
+            if element.get("out_of_viewport") and element.get("y", 0) < 0:
+                log(f"[5단계] 요소가 위에 있음 (y={element.get('y')}), 위로 스크롤...")
+                scroll_direction = "up"
+            else:
+                log("[5단계] 못 찾음, 아래로 추가 스크롤...")
+                scroll_direction = "down"
+
+            for extra in range(15):
+                if scroll_direction == "up":
+                    self.adb.scroll_up(short_scroll)
+                else:
+                    self.adb.scroll_down(short_scroll)
                 time.sleep(0.3)
                 element = self._find_element_by_text_hybrid(target, check_viewport=True)
                 if element.get("found"):
                     log(f"[발견] '{target}' y={element['center_y']} (추가 {extra + 1}회, {element.get('source', 'unknown')})")
                     return element
+                # 방향 전환: 계속 못 찾고 y가 반대로 갔으면
+                if element.get("out_of_viewport"):
+                    new_y = element.get("y", 0)
+                    if scroll_direction == "up" and new_y > self.adb.screen_height:
+                        log(f"[5단계] 방향 전환: 아래로")
+                        scroll_direction = "down"
+                    elif scroll_direction == "down" and new_y < 0:
+                        log(f"[5단계] 방향 전환: 위로")
+                        scroll_direction = "up"
             
             log(f"[실패] '{target}' 못 찾음", "ERROR")
             return None
