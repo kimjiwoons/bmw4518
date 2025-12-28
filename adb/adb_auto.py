@@ -548,6 +548,57 @@ class MobileCDP:
             log(f"[MobileCDP] 링크 찾기 오류: {e}", "ERROR")
             return {"found": False}
 
+    def find_all_links_by_domain(self, domain):
+        """도메인으로 모든 링크 찾기 → 좌표 목록 반환 (읽기 전용!)
+
+        Returns:
+            list: [{"found": True, "x": 360, "y": 500, "href": "..."}, ...]
+        """
+        if not self.connected:
+            return []
+
+        try:
+            js_code = f'''
+            (function() {{
+                var links = document.querySelectorAll('a[href*="{domain}"]');
+                var results = [];
+                for (var link of links) {{
+                    var rect = link.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {{
+                        results.push({{
+                            found: true,
+                            x: Math.round(rect.left + rect.width / 2),
+                            y: Math.round(rect.top + rect.height / 2),
+                            width: rect.width,
+                            height: rect.height,
+                            href: link.href,
+                            text: link.textContent.substring(0, 50),
+                            center_x: Math.round(rect.left + rect.width / 2),
+                            center_y: Math.round(rect.top + rect.height / 2)
+                        }});
+                    }}
+                }}
+                return results;
+            }})()
+            '''
+
+            result = self.send("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                links = result["result"].get("value", [])
+                if links:
+                    log(f"[MobileCDP] 도메인 링크 {len(links)}개 발견: {domain}")
+                    return links
+
+            return []
+
+        except Exception as e:
+            log(f"[MobileCDP] 링크 목록 오류: {e}", "ERROR")
+            return []
+
     def get_scroll_position(self):
         """현재 스크롤 위치 확인 (읽기 전용!)"""
         if not self.connected:
@@ -1946,7 +1997,43 @@ class NaverSearchAutomation:
                     return link
 
         return {"found": False}
-    
+
+    def _find_all_links_by_domain_hybrid(self, domain):
+        """하이브리드 도메인 링크 모두 찾기: MobileCDP 우선
+
+        Returns:
+            list: [{"found": True, "center_x": x, "center_y": y, "href": ...}, ...]
+        """
+        # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
+        if self.mobile_cdp and self.mobile_cdp.connected:
+            results = self.mobile_cdp.find_all_links_by_domain(domain)
+            if results:
+                # MobileCDP 형식 → ADB 형식 변환
+                links = []
+                for r in results:
+                    links.append({
+                        "found": True,
+                        "center_x": r["center_x"],
+                        "center_y": r["center_y"],
+                        "bounds": (
+                            r["x"] - r.get("width", 100) // 2,
+                            r["y"] - r.get("height", 50) // 2,
+                            r["x"] + r.get("width", 100) // 2,
+                            r["y"] + r.get("height", 50) // 2
+                        ),
+                        "href": r.get("href", ""),
+                        "text": r.get("text", ""),
+                        "source": "mobile_cdp"
+                    })
+                return links
+
+        # 2순위: uiautomator
+        xml = self.adb.get_screen_xml(force=True)
+        links = self.adb.find_all_elements_with_domain(domain, xml)
+        for link in links:
+            link["source"] = "uiautomator"
+        return links
+
     # ========================================
     # 1단계: 네이버 메인 이동
     # ========================================
@@ -2218,51 +2305,42 @@ class NaverSearchAutomation:
             self.adb.scroll_down(extra_scroll)
             time.sleep(random.uniform(0.2, 0.4))
 
-            # 덤프해서 더보기 찾기
-            xml = self.adb.get_screen_xml(force=True)
-            element = self.adb.find_element_by_text(target, xml=xml)
-            
+            # 덤프해서 더보기 찾기 (하이브리드: CDP 우선)
+            element = self._find_element_by_text_hybrid(target, check_viewport=True)
+
             if element.get("found"):
-                cy = element["center_y"]
-                if self.viewport_top <= cy <= self.viewport_bottom:
-                    log(f"[발견] '{target}' y={cy}")
-                    return element
-            
+                log(f"[발견] '{target}' y={element['center_y']} ({element.get('source', 'unknown')})")
+                return element
+
             # 못 찾으면 추가 스크롤 (덤프하며)
             log("[5단계] 못 찾음, 추가 스크롤...")
             for extra in range(10):
                 self.adb.scroll_down(short_scroll)
                 time.sleep(0.3)
-                xml = self.adb.get_screen_xml(force=True)
-                element = self.adb.find_element_by_text(target, xml=xml)
+                element = self._find_element_by_text_hybrid(target, check_viewport=True)
                 if element.get("found"):
-                    cy = element["center_y"]
-                    if self.viewport_top <= cy <= self.viewport_bottom:
-                        log(f"[발견] '{target}' y={cy} (추가 {extra + 1}회)")
-                        return element
+                    log(f"[발견] '{target}' y={element['center_y']} (추가 {extra + 1}회, {element.get('source', 'unknown')})")
+                    return element
             
             log(f"[실패] '{target}' 못 찾음", "ERROR")
             return None
         
-        # CDP 없으면 기존 방식 (매번 덤프)
-        log("[5단계] 기존 방식 (CDP 없음)")
+        # CDP 없으면 기존 방식 (매번 덤프) - 하이브리드로 요소 찾기
+        log("[5단계] 기존 방식 (CDP 계산값 없음)")
         for scroll_count in range(max_scrolls):
-            xml = self.adb.get_screen_xml(force=True)
-            element = self.adb.find_element_by_text(target, xml=xml)
-            
+            element = self._find_element_by_text_hybrid(target, check_viewport=True)
+
             if element.get("found"):
-                cy = element["center_y"]
-                
-                if self.viewport_top <= cy <= self.viewport_bottom:
-                    log(f"[발견] '{target}' y={cy}")
-                    return element
-                
-                if cy < self.viewport_top:
-                    self.adb.scroll_up(short_scroll)
-                    continue
-            
+                log(f"[발견] '{target}' y={element['center_y']} ({element.get('source', 'unknown')})")
+                return element
+
+            # 뷰포트 위에 있으면 위로 스크롤
+            if element.get("out_of_viewport") and element.get("y", 0) < self.viewport_top:
+                self.adb.scroll_up(short_scroll)
+                continue
+
             self.adb.scroll_down(short_scroll)
-            
+
             if scroll_count % 10 == 0:
                 log(f"[5단계] 스크롤 {scroll_count}/{max_scrolls}...")
         
@@ -2307,9 +2385,8 @@ class NaverSearchAutomation:
                 # URL 안 바뀌면 재클릭 (CDP 동일)
                 if reclick_try < max_reclick - 1:
                     log(f"[재클릭] 페이지 변경 없음, 재클릭 {reclick_try + 2}/{max_reclick}...")
-                    # 요소 다시 찾아서 클릭
-                    xml = self.adb.get_screen_xml(force=True)
-                    element = self.adb.find_element_by_text(target, xml=xml)
+                    # 요소 다시 찾아서 클릭 (하이브리드: CDP 우선)
+                    element = self._find_element_by_text_hybrid(target, check_viewport=False)
                     if element.get("found"):
                         self.adb.tap_element(element)
             
@@ -2384,34 +2461,36 @@ class NaverSearchAutomation:
         return False
     
     def _find_and_click_domain_final(self, domain):
-        """CDP 스크롤 후 도메인 찾아서 클릭"""
+        """CDP 스크롤 후 도메인 찾아서 클릭 (하이브리드: MobileCDP 우선)"""
         short_scroll = int(self.adb.screen_height * 0.3)
-        
-        # 먼저 현재 위치에서 찾기
-        xml = self.adb.get_screen_xml(force=True)
-        links = self.adb.find_all_elements_with_domain(domain, xml)
+
+        # 먼저 현재 위치에서 찾기 (하이브리드)
+        links = self._find_all_links_by_domain_hybrid(domain)
         visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
-        
+
         if visible:
+            source = visible[0].get("source", "unknown")
+            log(f"[7단계] 링크 발견 ({source})")
             return self._click_domain_link(visible, domain)
-        
+
         # 못 찾으면 추가 스크롤
         log("[7단계] CDP 위치에서 못 찾음, 추가 스크롤...")
         for _ in range(15):
             self.adb.scroll_down(short_scroll)
             time.sleep(0.3)
-            
-            xml = self.adb.get_screen_xml(force=True)
-            links = self.adb.find_all_elements_with_domain(domain, xml)
+
+            links = self._find_all_links_by_domain_hybrid(domain)
             visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
-            
+
             if visible:
+                source = visible[0].get("source", "unknown")
+                log(f"[7단계] 링크 발견 ({source})")
                 return self._click_domain_link(visible, domain)
-        
+
         return False
     
     def _click_domain_link(self, visible_links, domain):
-        """도메인 링크 클릭"""
+        """도메인 링크 클릭 (하이브리드)"""
         log(f"[발견] {domain} 링크 {len(visible_links)}개!")
 
         # 요소 위치에 따라 스크롤 방향 결정 (viewport 밖으로 나가지 않도록)
@@ -2430,10 +2509,9 @@ class NaverSearchAutomation:
 
         self.adb.scroll_down(extra)
         time.sleep(0.3)
-        
-        # 다시 확인
-        xml = self.adb.get_screen_xml(force=True)
-        links = self.adb.find_all_elements_with_domain(domain, xml)
+
+        # 다시 확인 (하이브리드)
+        links = self._find_all_links_by_domain_hybrid(domain)
         visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
         
         if visible:
@@ -2455,53 +2533,53 @@ class NaverSearchAutomation:
         return False
     
     def _find_and_click_domain_in_page(self, domain):
-        """현재 페이지에서 도메인 찾아서 클릭"""
+        """현재 페이지에서 도메인 찾아서 클릭 (하이브리드: MobileCDP 우선)"""
         max_scrolls = 30
         short_scroll = int(self.adb.screen_height * 0.3)
-        
+
         for scroll_count in range(max_scrolls):
-            xml = self.adb.get_screen_xml(force=True)
-            links = self.adb.find_all_elements_with_domain(domain, xml)
-            
+            # 하이브리드 도메인 찾기
+            links = self._find_all_links_by_domain_hybrid(domain)
+
             if links:
                 visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
-                
+
                 if visible:
-                    log(f"[발견] {domain} 링크 {len(visible)}개!")
-                    
+                    source = visible[0].get("source", "unknown")
+                    log(f"[발견] {domain} 링크 {len(visible)}개! ({source})")
+
                     # 추가 랜덤 스크롤 (CDP 동일)
                     extra = random.randint(30, 80) * random.choice([1, -1])
                     self.adb.scroll_down(extra)
                     time.sleep(0.3)
-                    
-                    # 다시 확인
-                    xml = self.adb.get_screen_xml(force=True)
-                    links = self.adb.find_all_elements_with_domain(domain, xml)
+
+                    # 다시 확인 (하이브리드)
+                    links = self._find_all_links_by_domain_hybrid(domain)
                     visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
-                    
+
                     if visible:
                         for click_try in range(3):
                             selected = random.choice(visible)
                             log(f"[클릭 {click_try + 1}/3] {selected['text'][:50]}...")
                             self.adb.tap_element(selected)
                             time.sleep(2)
-                            
+
                             xml = self.adb.get_screen_xml(force=True)
                             nx = self.adb.find_element_by_resource_id("nx_query", xml)
-                            
+
                             if not nx.get("found"):
                                 log("[성공] 페이지 이동!")
                                 return True
-                            
+
                             log("[재시도] 페이지 변경 안 됨")
-                        
+
                         return False
-            
+
             self.adb.scroll_down(short_scroll)
-            
+
             if scroll_count % 10 == 0:
                 log(f"[7단계] 스크롤 {scroll_count}/{max_scrolls}...")
-        
+
         return False
 
     def _click_page_number(self, page_num):
