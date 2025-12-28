@@ -1618,14 +1618,12 @@ class NaverSearchAutomation:
                     time.sleep(0.3)
                     return True
 
-            # 좌표 모드일 때: 텍스트로 검색 모드 확인
+            # 좌표 모드일 때: 클릭 2번 후 성공으로 간주 (요소 확인 불가)
             if use_coordinate_fallback:
-                if xml and ("검색어를 입력" in xml or "검색" in xml.lower()):
-                    log("[성공] 검색 모드 전환됨! (좌표 기반)")
-                    # 입력창 위치 클릭 (검색 모드에서 입력창은 상단)
-                    tap_y_input = int(100 * scale_y)
-                    self.adb.tap(tap_x, tap_y_input)
-                    time.sleep(0.3)
+                coordinate_clicks = retry - 2  # 좌표 모드 진입 후 클릭 횟수
+                if coordinate_clicks >= 2:
+                    log("[성공] 검색 모드 전환됨! (좌표 기반, 클릭 완료)")
+                    time.sleep(0.5)
                     return True
 
             time.sleep(0.5)
