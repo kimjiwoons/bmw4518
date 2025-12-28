@@ -2,39 +2,36 @@
 # -*- coding: utf-8 -*-
 """
 OCR 테스트 스크립트
-- 스크린샷 촬영 → OCR로 텍스트 찾기 → 클릭
-
-사용법: python test_ocr.py [찾을텍스트] [클릭여부]
-예시:
-  python test_ocr.py                          # "검색결과 더보기" 찾기만
-  python test_ocr.py "검색결과 더보기" click   # 찾고 클릭
-  python test_ocr.py "네이버" click            # "네이버" 찾고 클릭
 """
 
 import subprocess
 import sys
 import time
 
+def log(msg):
+    """즉시 출력 (버퍼 flush)"""
+    print(msg, flush=True)
+
+log("[1] 스크립트 시작")
+
 # OCR 관련
 try:
+    log("[2] easyocr import 중...")
     import easyocr
+    log("[3] numpy import 중...")
     import numpy as np
+    log("[4] PIL import 중...")
     from PIL import Image
     import io
-    print("[OK] easyocr, numpy, PIL 로드 완료")
+    log("[OK] 모든 패키지 로드 완료")
 except ImportError as e:
-    print(f"[ERROR] 필요한 패키지 설치: pip install easyocr numpy pillow")
-    print(f"  오류: {e}")
+    log(f"[ERROR] 패키지 오류: {e}")
     sys.exit(1)
 
 # 설정
 from config import PHONES, ADB_CONFIG
 
-# ========================================
-# ADB 함수들
-# ========================================
 def get_adb_address():
-    """config에서 ADB 주소 가져오기"""
     for phone in PHONES:
         if PHONES[phone].get("adb_address"):
             return PHONES[phone]["adb_address"]
@@ -42,124 +39,112 @@ def get_adb_address():
 
 ADB_PATH = ADB_CONFIG.get("adb_path", "adb")
 ADB_ADDRESS = get_adb_address()
+log(f"[INFO] ADB: {ADB_ADDRESS}")
 
-print(f"[INFO] ADB 주소: {ADB_ADDRESS}")
-
-def run_adb(command, timeout=30):
-    """ADB 명령 실행"""
-    full_cmd = f'{ADB_PATH} -s {ADB_ADDRESS} {command}'
-    try:
-        result = subprocess.run(full_cmd, shell=True, capture_output=True, timeout=timeout)
-        return result
-    except Exception as e:
-        print(f"[ERROR] ADB 실행 실패: {e}")
-        return None
-
+# ========================================
+# ADB 함수
+# ========================================
 def take_screenshot():
-    """스크린샷 촬영 → PIL Image"""
-    print("[INFO] 스크린샷 촬영 중...")
+    log("[SCREEN] 스크린샷 촬영...")
     cmd = f'{ADB_PATH} -s {ADB_ADDRESS} exec-out screencap -p'
     result = subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
     if result.returncode == 0 and result.stdout:
         image = Image.open(io.BytesIO(result.stdout))
-        print(f"[OK] 스크린샷: {image.size}")
+        log(f"[SCREEN] 완료: {image.size}")
         return image
-    print("[ERROR] 스크린샷 실패")
+    log("[SCREEN] 실패!")
     return None
 
 def tap(x, y):
-    """화면 탭"""
-    print(f"[TAP] ({x}, {y})")
-    run_adb(f'shell input tap {x} {y}')
+    log(f"[TAP] ({x}, {y})")
+    cmd = f'{ADB_PATH} -s {ADB_ADDRESS} shell input tap {x} {y}'
+    subprocess.run(cmd, shell=True)
 
 # ========================================
-# OCR 함수
+# OCR
 # ========================================
 OCR_READER = None
 
-def init_ocr():
-    """OCR 리더 초기화"""
+def do_ocr_test(target_text, do_click=False):
     global OCR_READER
-    if OCR_READER is None:
-        print("[INFO] EasyOCR 초기화 중... (최초 1회)")
-        OCR_READER = easyocr.Reader(['ko', 'en'], gpu=False)
-        print("[OK] EasyOCR 초기화 완료")
-    return OCR_READER
 
-def find_text_ocr(target_text, do_click=False):
-    """OCR로 텍스트 찾기"""
+    log("=" * 50)
+    log(f"[TEST] 찾을 텍스트: '{target_text}'")
+    log(f"[TEST] 클릭 여부: {do_click}")
+    log("=" * 50)
 
     try:
         # 1. 스크린샷
+        log("[STEP1] 스크린샷...")
         screenshot = take_screenshot()
         if not screenshot:
-            return None
+            log("[FAIL] 스크린샷 실패")
+            return
 
-        # 2. 리사이즈 (메모리 절약)
-        original_size = screenshot.size
+        # 2. 리사이즈
+        log("[STEP2] 리사이즈...")
         scale = 0.5
-        new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
-        screenshot_resized = screenshot.resize(new_size, Image.LANCZOS)
-        print(f"[INFO] 리사이즈: {original_size} → {new_size}")
+        orig = screenshot.size
+        new_size = (int(orig[0] * scale), int(orig[1] * scale))
+        resized = screenshot.resize(new_size, Image.LANCZOS)
+        log(f"[STEP2] {orig} → {new_size}")
 
-        # 3. OCR 실행
-        print(f"[INFO] OCR 실행 중... ('{target_text}' 찾는 중)")
-        reader = init_ocr()
+        # 3. OCR 초기화
+        log("[STEP3] OCR 초기화...")
+        if OCR_READER is None:
+            log("[STEP3] EasyOCR Reader 생성 중... (오래 걸림)")
+            OCR_READER = easyocr.Reader(['ko', 'en'], gpu=False)
+            log("[STEP3] Reader 생성 완료!")
+        else:
+            log("[STEP3] 기존 Reader 사용")
 
-        print("[INFO] numpy 변환 중...")
-        img_array = np.array(screenshot_resized)
-        print(f"[INFO] 이미지 배열 크기: {img_array.shape}")
+        # 4. numpy 변환
+        log("[STEP4] numpy 변환...")
+        img_array = np.array(resized)
+        log(f"[STEP4] shape: {img_array.shape}, dtype: {img_array.dtype}")
 
-        print("[INFO] readtext 실행 중...")
-        results = reader.readtext(img_array)
-        print(f"[OK] OCR 완료!")
+        # 5. OCR 실행
+        log("[STEP5] readtext 실행... (시간 소요)")
+        results = OCR_READER.readtext(img_array)
+        log(f"[STEP5] 완료! 감지된 텍스트: {len(results)}개")
 
-        print(f"[INFO] 감지된 텍스트 {len(results)}개:")
-
+        # 6. 결과 출력
+        log("[STEP6] 결과 분석...")
         found = None
-        for i, (bbox, text, confidence) in enumerate(results):
-            # 좌표 계산 (원본 크기로 복원)
+        for i, (bbox, text, conf) in enumerate(results):
             x1, y1 = bbox[0]
             x2, y2 = bbox[2]
-            center_x = int((x1 + x2) / 2 / scale)
-            center_y = int((y1 + y2) / 2 / scale)
+            cx = int((x1 + x2) / 2 / scale)
+            cy = int((y1 + y2) / 2 / scale)
 
-            # 매칭 여부
-            match = "★" if target_text in text else " "
-            print(f"  [{match}] #{i}: '{text[:30]}' → ({center_x}, {center_y}) conf={confidence:.2f}")
+            mark = "★" if target_text in text else " "
+            log(f"  [{mark}] #{i}: '{text[:25]}' ({cx},{cy}) conf={conf:.2f}")
 
             if target_text in text and found is None:
-                found = {
-                    "text": text,
-                    "x": center_x,
-                    "y": center_y,
-                    "confidence": confidence
-                }
+                found = {"x": cx, "y": cy, "text": text, "conf": conf}
 
-        # 4. 결과
+        # 7. 최종 결과
+        log("=" * 50)
         if found:
-            print(f"\n[FOUND] '{target_text}' 발견!")
-            print(f"  좌표: ({found['x']}, {found['y']})")
-            print(f"  신뢰도: {found['confidence']:.2f}")
+            log(f"[SUCCESS] '{target_text}' 발견!")
+            log(f"  좌표: ({found['x']}, {found['y']})")
+            log(f"  신뢰도: {found['conf']:.2f}")
 
             if do_click:
-                print(f"\n[CLICK] 클릭 실행...")
-                time.sleep(0.5)
+                log("[CLICK] 클릭 실행...")
+                time.sleep(0.3)
                 tap(found['x'], found['y'])
-                print("[OK] 클릭 완료!")
-
-            return found
+                log("[CLICK] 완료!")
         else:
-            print(f"\n[NOT FOUND] '{target_text}' 못 찾음")
-            return None
+            log(f"[FAIL] '{target_text}' 못 찾음")
+        log("=" * 50)
 
     except Exception as e:
-        print(f"[ERROR] OCR 오류 발생!")
-        print(f"[ERROR] 타입: {type(e).__name__}")
-        print(f"[ERROR] 내용: {e}")
+        log(f"[ERROR] 예외 발생!")
+        log(f"[ERROR] 타입: {type(e).__name__}")
+        log(f"[ERROR] 내용: {e}")
         import traceback
         traceback.print_exc()
-        return None
 
 # ========================================
 # 메인
@@ -173,18 +158,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[2].lower() == "click":
         do_click = True
 
-    print("=" * 50)
-    print("OCR 테스트")
-    print("=" * 50)
-    print(f"찾을 텍스트: '{target}'")
-    print(f"클릭 여부: {do_click}")
-    print("=" * 50)
-
-    result = find_text_ocr(target, do_click)
-
-    print("\n" + "=" * 50)
-    if result:
-        print(f"[결과] 성공! 좌표: ({result['x']}, {result['y']})")
-    else:
-        print("[결과] 실패 - 텍스트를 찾지 못함")
-    print("=" * 50)
+    do_ocr_test(target, do_click)
+    log("[END] 스크립트 종료")
