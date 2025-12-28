@@ -78,10 +78,17 @@ def do_ocr_test(target_text, do_click=False):
             log("[FAIL] 스크린샷 실패")
             return
 
-        # 2. RGB 변환 (RGBA → RGB)
-        log("[STEP2] RGB 변환...")
+        # 2. 이미지 전처리 (인식률 향상)
+        log("[STEP2] 이미지 전처리...")
+        # RGBA → RGB
         if screenshot.mode == 'RGBA':
             screenshot = screenshot.convert('RGB')
+        # 그레이스케일 변환
+        screenshot = screenshot.convert('L')
+        # 대비 증가
+        from PIL import ImageEnhance
+        enhancer = ImageEnhance.Contrast(screenshot)
+        screenshot = enhancer.enhance(2.0)  # 대비 2배
         log(f"[STEP2] mode: {screenshot.mode}, size: {screenshot.size}")
 
         # 3. OCR 실행 (한글+영어)
