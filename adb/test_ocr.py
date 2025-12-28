@@ -81,13 +81,13 @@ def do_ocr_test(target_text, do_click=False):
             log("[FAIL] 스크린샷 실패")
             return
 
-        # 2. 리사이즈
+        # 2. 리사이즈 (메모리 부족 방지: 30%)
         log("[STEP2] 리사이즈...")
-        scale = 0.5
+        scale = 0.3
         orig = screenshot.size
         new_size = (int(orig[0] * scale), int(orig[1] * scale))
         resized = screenshot.resize(new_size, Image.LANCZOS)
-        log(f"[STEP2] {orig} → {new_size}")
+        log(f"[STEP2] {orig} → {new_size} (scale={scale})")
 
         # 3. OCR 초기화
         log("[STEP3] OCR 초기화...")
