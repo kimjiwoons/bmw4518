@@ -2369,13 +2369,20 @@ class NaverSearchAutomation:
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("more_scroll_count", 0) > 0:
             cdp_scroll = self.cdp_info["more_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (보상 모드)")
+
+            # MobileCDP 연결되어 있으면 70%만 스크롤 (나머지는 정밀 조정)
+            if self.mobile_cdp and self.mobile_cdp.connected:
+                safe_scroll = int(cdp_scroll * 0.7)
+                log(f"[CDP] 안전 스크롤: {safe_scroll}번 (원래 {cdp_scroll}, 70% 적용)")
+            else:
+                safe_scroll = cdp_scroll
+                log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤 (보상 모드)")
 
             # 스크롤 오차 초기화
             self.adb.reset_scroll_debt()
 
             # 덤프 없이 빠르게 스크롤 (compensated=True: 랜덤이지만 총 이동량 정확)
-            for i in range(cdp_scroll):
+            for i in range(safe_scroll):
                 self.adb.scroll_down(compensated=True)
 
                 # 읽기 멈춤 (확률적)
@@ -2387,7 +2394,7 @@ class NaverSearchAutomation:
                     time.sleep(random.uniform(0.1, 0.2))
 
                 if (i + 1) % 10 == 0:
-                    log(f"[5단계] 스크롤 {i + 1}/{cdp_scroll}...")
+                    log(f"[5단계] 스크롤 {i + 1}/{safe_scroll}...")
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
@@ -2405,18 +2412,40 @@ class NaverSearchAutomation:
                         if element.get("found"):
                             return element
 
-                    # 필요한 만큼만 스크롤 (랜덤 오차 추가)
+                    # 필요한 만큼만 스크롤 (큰 값은 여러 번 나눠서)
                     if scroll_needed != 0:
                         # 뷰포트 중앙보다 약간 위에 오도록 (클릭하기 좋게)
-                        adjusted_scroll = scroll_needed - random.randint(50, 150)
-                        log(f"[MobileCDP] 정확한 스크롤: {adjusted_scroll}px (원래 {scroll_needed}px)")
+                        total_scroll = scroll_needed - random.randint(50, 150)
+                        max_single_scroll = 500  # 한 번에 최대 500px
 
-                        if adjusted_scroll > 0:
-                            self.adb.scroll_down(adjusted_scroll)
-                        else:
-                            self.adb.scroll_up(abs(adjusted_scroll))
-                        time.sleep(0.3)
+                        log(f"[MobileCDP] 필요한 스크롤: {total_scroll}px")
 
+                        # 큰 스크롤은 여러 번 나눠서
+                        remaining = abs(total_scroll)
+                        direction = "down" if total_scroll > 0 else "up"
+
+                        while remaining > 0:
+                            chunk = min(remaining, max_single_scroll)
+                            # 랜덤 변화 추가
+                            chunk = chunk + random.randint(-50, 50)
+                            chunk = max(100, chunk)
+
+                            if direction == "down":
+                                self.adb.scroll_down(chunk)
+                            else:
+                                self.adb.scroll_up(chunk)
+
+                            remaining -= chunk
+                            time.sleep(0.2)
+
+                            # 중간에 체크 (마지막 청크 전에)
+                            if remaining < max_single_scroll:
+                                element = self._find_element_by_text_hybrid(target, check_viewport=True)
+                                if element.get("found"):
+                                    log(f"[발견] '{target}' y={element['center_y']} (MobileCDP 정밀 스크롤)")
+                                    return element
+
+                        # 최종 체크
                         element = self._find_element_by_text_hybrid(target, check_viewport=True)
                         if element.get("found"):
                             log(f"[발견] '{target}' y={element['center_y']} (MobileCDP 정밀 스크롤)")
