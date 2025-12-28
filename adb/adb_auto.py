@@ -482,11 +482,21 @@ class MobileCDP:
                 for (var el of elements) {{
                     var txt = el.textContent ? el.textContent.trim() : '';
                     if ({match_condition}) {{
+                        // 가시성 체크: 숨겨진 요소 제외
+                        var style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {{
+                            continue;
+                        }}
+                        // offsetParent가 null이면 숨겨진 요소 (fixed 제외)
+                        if (el.offsetParent === null && style.position !== 'fixed') {{
+                            continue;
+                        }}
+
                         var rect = el.getBoundingClientRect();
                         // 클릭 가능한 요소인지 확인
                         var isClickable = el.tagName === 'A' || el.tagName === 'BUTTON' ||
                                         el.onclick !== null ||
-                                        window.getComputedStyle(el).cursor === 'pointer';
+                                        style.cursor === 'pointer';
                         if (rect.width > 50 && rect.height > 0 && rect.height < 150 && {viewport_check} true) {{
                             return {{
                                 found: true,
@@ -497,7 +507,8 @@ class MobileCDP:
                                 text: txt.substring(0, 50),
                                 in_viewport: rect.top > 0 && rect.bottom < viewportHeight,
                                 viewport_height: viewportHeight,
-                                clickable: isClickable
+                                clickable: isClickable,
+                                tag: el.tagName
                             }};
                         }}
                     }}
@@ -514,7 +525,9 @@ class MobileCDP:
             if result and "result" in result:
                 value = result["result"].get("value", {})
                 if value.get("found"):
-                    log(f"[MobileCDP] 요소 발견: '{text}' → ({value['x']}, {value['y']})")
+                    tag = value.get('tag', '?')
+                    clickable = value.get('clickable', False)
+                    log(f"[MobileCDP] 요소 발견: '{text}' → ({value['x']}, {value['y']}) <{tag}> clickable={clickable}")
                     return value
 
             return {"found": False}
