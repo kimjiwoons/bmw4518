@@ -2585,6 +2585,35 @@ class NaverSearchAutomation:
         return False
     
     # ========================================
+    # 삼성 브라우저: 템플릿 매칭으로 실제 화면 확인
+    # ========================================
+    def _verify_more_button_visible(self):
+        """삼성 브라우저: 템플릿 매칭으로 '검색결과 더보기' 버튼이 실제 화면에 보이는지 확인
+
+        Returns:
+            bool: True면 화면에 보임, False면 안 보임
+        """
+        if self.browser != "samsung" or not TEMPLATE_MATCHING_AVAILABLE:
+            return True  # 삼성 아니면 그냥 통과 (CDP 결과 신뢰)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(script_dir, "template_more.png")
+
+        if not os.path.exists(template_path):
+            log("[TEMPLATE] 템플릿 파일 없음, CDP 결과 신뢰")
+            return True  # 템플릿 없으면 그냥 통과
+
+        log("[TEMPLATE] 삼성 브라우저 - 실제 화면에 버튼 있는지 확인...")
+        result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+
+        if result.get("found"):
+            log(f"[TEMPLATE] ✓ 화면에서 확인됨 (유사도: {result.get('conf', 0):.3f})")
+            return True
+        else:
+            log(f"[TEMPLATE] ✗ 화면에서 안 보임 (CDP는 찾았지만 실제 없음)")
+            return False
+
+    # ========================================
     # 5단계: "검색결과 더보기" 찾기
     # ========================================
     def step5_scroll_to_more(self):
@@ -2628,8 +2657,12 @@ class NaverSearchAutomation:
             # 요소 찾기 (exact_match=True: 정확한 매칭으로 부모 요소 제외)
             element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
             if element.get("found"):
-                log(f"[발견] '{target}' y={element['center_y']}")
-                return element
+                # 삼성 브라우저: 템플릿 매칭으로 실제 화면에 있는지 확인
+                if self._verify_more_button_visible():
+                    log(f"[발견] '{target}' y={element['center_y']}")
+                    return element
+                else:
+                    log("[5단계] CDP는 찾았지만 화면에 없음, 스크롤 계속...")
 
             # 지나쳤으면 위로 300px씩 올리면서 찾기
             if element.get("out_of_viewport") and element.get("y", 0) < 0:
@@ -2644,11 +2677,14 @@ class NaverSearchAutomation:
 
                     element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
                     if element.get("found"):
-                        # 클릭 전 디버그 출력
-                        if self.mobile_cdp and self.mobile_cdp.connected:
-                            self.mobile_cdp.debug_find_all_elements(target)
-                        log(f"[발견] '{target}' y={element['center_y']}")
-                        return element
+                        # 삼성 브라우저: 템플릿 매칭으로 실제 화면에 있는지 확인
+                        if self._verify_more_button_visible():
+                            # 클릭 전 디버그 출력
+                            if self.mobile_cdp and self.mobile_cdp.connected:
+                                self.mobile_cdp.debug_find_all_elements(target)
+                            log(f"[발견] '{target}' y={element['center_y']}")
+                            return element
+                        # 템플릿 검증 실패 시 계속 스크롤
             else:
                 # 아직 안 나왔으면 아래로 더 스크롤
                 log("[5단계] 아직 안 보임, 아래로 추가 스크롤...")
@@ -2657,8 +2693,11 @@ class NaverSearchAutomation:
                     time.sleep(0.3)
                     element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
                     if element.get("found"):
-                        log(f"[발견] '{target}' y={element['center_y']}")
-                        return element
+                        # 삼성 브라우저: 템플릿 매칭으로 실제 화면에 있는지 확인
+                        if self._verify_more_button_visible():
+                            log(f"[발견] '{target}' y={element['center_y']}")
+                            return element
+                        # 템플릿 검증 실패 시 계속 스크롤
 
             log(f"[실패] '{target}' 못 찾음", "ERROR")
             return None
@@ -2669,8 +2708,11 @@ class NaverSearchAutomation:
             element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
 
             if element.get("found"):
-                log(f"[발견] '{target}' y={element['center_y']} ({element.get('source', 'unknown')})")
-                return element
+                # 삼성 브라우저: 템플릿 매칭으로 실제 화면에 있는지 확인
+                if self._verify_more_button_visible():
+                    log(f"[발견] '{target}' y={element['center_y']} ({element.get('source', 'unknown')})")
+                    return element
+                # 템플릿 검증 실패 시 계속 스크롤
 
             # 뷰포트 위에 있으면 위로 스크롤
             if element.get("out_of_viewport") and element.get("y", 0) < self.viewport_top:
