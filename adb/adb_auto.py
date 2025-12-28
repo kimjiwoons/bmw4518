@@ -2192,6 +2192,12 @@ class NaverSearchAutomation:
 
         self._mobile_cdp_initialized = True
 
+        # 삼성 브라우저: CDP 연결 안 함 (탐지 위험 제거)
+        if self.browser == "samsung":
+            log("[MobileCDP] 삼성 브라우저 - CDP 연결 안 함 (순수 ADB 모드)")
+            self.mobile_cdp = None
+            return
+
         from config import BROWSERS
         browser_info = BROWSERS.get(self.browser, {})
 
