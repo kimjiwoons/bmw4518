@@ -1164,15 +1164,138 @@ class ADBController:
             log(f"[ADB] 브라우저 데이터 초기화 실패: {result}", "WARN")
             return False
 
-    def open_url(self, url, max_retry=3):
-        """URL 열기 + 브라우저 실행 확인"""
+    def handle_browser_first_run(self, browser="chrome", max_attempts=10):
+        """브라우저 첫 실행 설정 화면 자동 처리
+
+        Args:
+            browser: 브라우저 종류 (chrome, samsung, edge, opera, firefox)
+            max_attempts: 최대 시도 횟수
+
+        Returns:
+            bool: 처리 완료 여부
+        """
+        log(f"[ADB] 브라우저 첫 실행 설정 확인 ({browser})...")
+
+        # 브라우저별 첫 실행 버튼 텍스트
+        first_run_buttons = {
+            "chrome": [
+                "동의 및 계속",  # Accept & Continue (한글)
+                "Accept & continue",  # Accept & Continue (영어)
+                "동의",
+                "계속",
+                "아니요",  # No thanks for sync
+                "No thanks",
+                "건너뛰기",
+                "Skip",
+                "사용 안함",
+                "No, thanks",
+            ],
+            "samsung": [
+                "동의",
+                "시작",
+                "Start",
+                "확인",
+                "OK",
+                "건너뛰기",
+                "Skip",
+            ],
+            "edge": [
+                "수락",
+                "Accept",
+                "시작",
+                "Start",
+                "건너뛰기",
+                "Skip",
+                "아니요",
+                "No thanks",
+            ],
+            "opera": [
+                "동의",
+                "Accept",
+                "시작",
+                "Start",
+                "건너뛰기",
+                "Skip",
+            ],
+            "firefox": [
+                "시작하기",
+                "Get started",
+                "건너뛰기",
+                "Skip",
+                "나중에",
+                "Later",
+            ],
+        }
+
+        buttons_to_find = first_run_buttons.get(browser, first_run_buttons["chrome"])
+
+        for attempt in range(max_attempts):
+            time.sleep(1)
+            xml = self.get_screen_xml(force=True)
+
+            if not xml:
+                continue
+
+            # 네이버 페이지가 로드되면 설정 완료
+            if "naver" in xml.lower() or "검색" in xml:
+                log("[ADB] 브라우저 설정 완료, 네이버 페이지 로드됨")
+                return True
+
+            # 첫 실행 버튼 찾아서 클릭
+            button_found = False
+            for button_text in buttons_to_find:
+                element = self.find_element_by_text(button_text, partial=False, xml=xml)
+                if element and element.get("found"):
+                    log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
+                    self.tap_element(element)
+                    time.sleep(0.5)
+                    button_found = True
+                    break
+
+            if not button_found:
+                # 부분 매칭으로 재시도
+                for button_text in buttons_to_find:
+                    element = self.find_element_by_text(button_text, partial=True, xml=xml)
+                    if element and element.get("found"):
+                        log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
+                        self.tap_element(element)
+                        time.sleep(0.5)
+                        button_found = True
+                        break
+
+            if not button_found:
+                log(f"[ADB] 첫 실행 버튼 없음, 대기 중... ({attempt + 1}/{max_attempts})")
+
+        log("[ADB] 첫 실행 설정 처리 완료 (또는 타임아웃)")
+        return True
+
+    def open_url(self, url, browser="chrome", handle_first_run=True, max_retry=3):
+        """URL 열기 + 브라우저 실행 확인
+
+        Args:
+            url: 열 URL
+            browser: 브라우저 종류 (chrome, samsung, edge, opera, firefox)
+            handle_first_run: 첫 실행 설정 자동 처리 여부
+            max_retry: 최대 재시도 횟수
+        """
+        from config import BROWSERS
+
+        # 브라우저 패키지 정보
+        browser_info = BROWSERS.get(browser, BROWSERS.get("chrome"))
+        package = browser_info["package"]
 
         for attempt in range(1, max_retry + 1):
-            log(f"URL 열기 (시도 {attempt}/{max_retry}): {url}")
-            self.shell(f'am start -a android.intent.action.VIEW -d "{url}"')
-            
+            log(f"URL 열기 (시도 {attempt}/{max_retry}, {browser}): {url}")
+
+            # 브라우저별 URL 열기
+            self.shell(f'am start -a android.intent.action.VIEW -d "{url}" -p {package}')
+
             time.sleep(2)
-            
+
+            # 첫 실행 설정 처리
+            if handle_first_run:
+                self.handle_browser_first_run(browser, max_attempts=5)
+
             # 브라우저 로딩 확인 (최대 5초)
             for _ in range(10):
                 xml = self.get_screen_xml(force=True)
@@ -1182,12 +1305,12 @@ class ADBController:
                         random_delay(1.0, 2.0)
                         return True
                 time.sleep(0.5)
-            
+
             if attempt < max_retry:
                 log(f"[재시도] 브라우저 로딩 안 됨...")
                 self.shell("input keyevent 3")
                 time.sleep(1)
-        
+
         log("[실패] 브라우저 실행 실패", "ERROR")
         return False
     
@@ -1401,11 +1524,12 @@ class ADBController:
 # 네이버 검색 자동화
 # ============================================
 class NaverSearchAutomation:
-    def __init__(self, adb: ADBController, cdp_info=None):
+    def __init__(self, adb: ADBController, cdp_info=None, browser="chrome"):
         self.adb = adb
         self.viewport_top = adb.screen_height * 0.15
         self.viewport_bottom = adb.screen_height * 0.85
         self.cdp_info = cdp_info  # CDP 계산 결과
+        self.browser = browser  # 사용할 브라우저
     
     # ========================================
     # 1단계: 네이버 메인 이동
@@ -1414,8 +1538,8 @@ class NaverSearchAutomation:
         log("=" * 50)
         log("[1단계] 네이버 메인으로 이동")
         log("=" * 50)
-        
-        if not self.adb.open_url(NAVER_CONFIG["start_url"], max_retry=3):
+
+        if not self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=3):
             return False
         return True
     
@@ -1434,7 +1558,7 @@ class NaverSearchAutomation:
             # 5번마다 메인 재이동 (CDP 동일)
             if retry > 1 and (retry - 1) % clicks_before_reload == 0:
                 log(f"[재이동] {clicks_before_reload}번 실패, 네이버 재이동...")
-                self.adb.open_url(NAVER_CONFIG["start_url"], max_retry=1)
+                self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=1)
             
             xml = self.adb.get_screen_xml(force=True)
             
@@ -2138,15 +2262,18 @@ def get_cdp_scroll_info(keyword, domain, screen_width, screen_height, force_refr
 # 메인 (무한 재시도 루프 포함)
 # ============================================
 def main():
+    from config import BROWSERS
+
     if len(sys.argv) < 3:
-        print("사용법: python adb_auto_cdp.py 검색어 도메인 [검색모드] [폰번호] [마지막]")
-        print("예시: python adb_auto_cdp.py 곤지암스키강습 sidecut.co.kr")
-        print("예시: python adb_auto_cdp.py 곤지암스키강습 sidecut.co.kr total")
-        print("예시: python adb_auto_cdp.py 곤지암스키강습 sidecut.co.kr more 1 1")
+        print("사용법: python adb_auto.py 검색어 도메인 [검색모드] [폰번호] [마지막] [브라우저]")
+        print("예시: python adb_auto.py 곤지암스키강습 sidecut.co.kr")
+        print("예시: python adb_auto.py 곤지암스키강습 sidecut.co.kr total")
+        print("예시: python adb_auto.py 곤지암스키강습 sidecut.co.kr more 1 1 samsung")
         print("")
         print("[검색모드] total=통합에서만, more=더보기에서, both=통합→더보기 (기본값)")
         print("[폰번호] config.py PHONES 키 (기본값: 1)")
         print("[마지막] 0=중간, 1=마지막 키워드")
+        print("[브라우저] chrome, samsung, edge, opera, firefox (기본값: chrome)")
         return
 
     keyword = sys.argv[1]
@@ -2171,6 +2298,13 @@ def main():
     phone_key = sys.argv[4] if len(sys.argv) >= 5 else "1"
     is_last = sys.argv[5] in ["1", "true", "last"] if len(sys.argv) >= 6 else False
 
+    # 브라우저 선택
+    browser = sys.argv[6].lower() if len(sys.argv) >= 7 else "chrome"
+    if browser not in BROWSERS:
+        print(f"[오류] 지원하지 않는 브라우저: {browser}")
+        print(f"[지원 브라우저] {', '.join(BROWSERS.keys())}")
+        return
+
     if phone_key not in PHONES:
         print(f"[오류] 폰 '{phone_key}' 없음")
         return
@@ -2191,6 +2325,7 @@ def main():
         print(f"[도메인] {domain}")
         print(f"[모드] 통합:{search_in_total}, 더보기:{go_to_more}")
         print(f"[폰] {phone_config.get('name', phone_key)}")
+        print(f"[브라우저] {browser}")
         print(f"[마지막] {'YES' if is_last else 'NO'}")
         print("=" * 60)
 
@@ -2203,8 +2338,9 @@ def main():
 
         # 브라우저 데이터 초기화 (새 프로필)
         if ADB_CONFIG.get("clear_browser_data", False):
-            package = ADB_CONFIG.get("browser_package", "com.android.chrome")
-            if not adb.clear_browser_data(package):
+            # 선택된 브라우저의 패키지 사용
+            browser_package = BROWSERS[browser]["package"]
+            if not adb.clear_browser_data(browser_package):
                 log("[무한재시도] 브라우저 초기화 실패, 처음부터 재시도...", "ERROR")
                 time.sleep(3)
                 continue  # 처음부터 다시 (ADB 재연결부터)
@@ -2229,8 +2365,8 @@ def main():
 
         print("")
 
-        # 자동화 실행
-        automation = NaverSearchAutomation(adb, cdp_info)
+        # 자동화 실행 (브라우저 전달)
+        automation = NaverSearchAutomation(adb, cdp_info, browser=browser)
         max_retry = NAVER_CONFIG.get("max_full_retry", 2)
 
         need_full_restart = False
