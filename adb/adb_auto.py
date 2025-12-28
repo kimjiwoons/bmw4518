@@ -403,7 +403,12 @@ class MobileCDP:
                 log("[MobileCDP] 탭을 찾을 수 없음")
                 return False
 
-            self.ws = websocket.create_connection(ws_url, timeout=10)
+            # Origin 헤더 없이 연결 시도 (CORS 우회)
+            self.ws = websocket.create_connection(
+                ws_url,
+                timeout=10,
+                suppress_origin=True
+            )
             self.connected = True
             log(f"[MobileCDP] {self.browser} 브라우저 연결 성공!")
             return True
