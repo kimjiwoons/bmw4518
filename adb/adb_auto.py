@@ -1623,14 +1623,9 @@ class NaverSearchAutomation:
                     time.sleep(0.3)
                     return True
 
-            # 좌표 모드일 때: 검색 입력창 클릭 후 성공
+            # 좌표 모드일 때: 검색창 클릭 후 딜레이만 주고 성공
             if use_coordinate_fallback:
-                # 검색 모드에서 입력창은 상단에 위치 (y=100 근처)
-                input_y = int(100 * scale_y)
-                input_x = int(360 * scale_x)  # 화면 중앙
-                log(f"[좌표 클릭] 입력창 ({input_x}, {input_y})")
-                self.adb.tap(input_x, input_y)
-                time.sleep(0.5)
+                time.sleep(1.5)  # 검색 모드 전환 대기
                 log("[성공] 검색 모드 전환됨! (좌표 기반)")
                 return True
 
