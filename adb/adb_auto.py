@@ -658,6 +658,72 @@ class MobileCDP:
         except:
             return 0
 
+    def get_element_scroll_info(self, text):
+        """요소까지 스크롤하는데 필요한 정보 계산 (읽기 전용!)
+
+        Returns:
+            dict: {
+                "found": True,
+                "current_scroll": 1234,  # 현재 scrollY
+                "element_viewport_y": 500,  # 요소의 뷰포트 상대 Y
+                "element_absolute_y": 1734,  # 요소의 문서 절대 Y
+                "scroll_needed": 800,  # 뷰포트 중앙에 오려면 필요한 스크롤
+                "viewport_height": 800
+            }
+        """
+        if not self.connected:
+            return {"found": False}
+
+        try:
+            js_code = f'''
+            (function() {{
+                var elements = document.querySelectorAll('*');
+                for (var el of elements) {{
+                    if (el.textContent && el.textContent.includes('{text}')) {{
+                        var rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {{
+                            var scrollY = window.scrollY || document.documentElement.scrollTop;
+                            var viewportHeight = window.innerHeight;
+                            var elementViewportY = rect.top + rect.height / 2;
+                            var elementAbsoluteY = scrollY + elementViewportY;
+                            var viewportCenter = viewportHeight / 2;
+                            var scrollNeeded = elementAbsoluteY - scrollY - viewportCenter;
+
+                            return {{
+                                found: true,
+                                current_scroll: Math.round(scrollY),
+                                element_viewport_y: Math.round(elementViewportY),
+                                element_absolute_y: Math.round(elementAbsoluteY),
+                                scroll_needed: Math.round(scrollNeeded),
+                                viewport_height: Math.round(viewportHeight),
+                                text: el.textContent.substring(0, 30)
+                            }};
+                        }}
+                    }}
+                }}
+                return {{found: false}};
+            }})()
+            '''
+
+            result = self.send("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                value = result["result"].get("value", {})
+                if value.get("found"):
+                    log(f"[MobileCDP] 스크롤 정보: 현재={value['current_scroll']}, "
+                        f"요소절대위치={value['element_absolute_y']}, "
+                        f"필요스크롤={value['scroll_needed']}")
+                    return value
+
+            return {"found": False}
+
+        except Exception as e:
+            log(f"[MobileCDP] 스크롤 정보 오류: {e}", "ERROR")
+            return {"found": False}
+
 
 # ============================================
 # CDP 스크롤 계산기 (정확도 향상 버전)
@@ -2325,11 +2391,42 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
-            # 여유분 스크롤 1회 추가 (420~550px)
-            extra_scroll = random.randint(420, 550)
-            log(f"[5단계] 여유분 스크롤: {extra_scroll}px")
-            self.adb.scroll_down(extra_scroll)
-            time.sleep(random.uniform(0.2, 0.4))
+            # MobileCDP로 정확한 위치 계산 후 스크롤
+            if self.mobile_cdp and self.mobile_cdp.connected:
+                scroll_info = self.mobile_cdp.get_element_scroll_info(target)
+                if scroll_info.get("found"):
+                    scroll_needed = scroll_info["scroll_needed"]
+                    viewport_y = scroll_info["element_viewport_y"]
+
+                    # 요소가 이미 뷰포트 안에 있으면 바로 반환
+                    if 0 < viewport_y < scroll_info["viewport_height"]:
+                        log(f"[MobileCDP] 요소가 이미 뷰포트 안에 있음 (y={viewport_y})")
+                        element = self._find_element_by_text_hybrid(target, check_viewport=True)
+                        if element.get("found"):
+                            return element
+
+                    # 필요한 만큼만 스크롤 (랜덤 오차 추가)
+                    if scroll_needed != 0:
+                        # 뷰포트 중앙보다 약간 위에 오도록 (클릭하기 좋게)
+                        adjusted_scroll = scroll_needed - random.randint(50, 150)
+                        log(f"[MobileCDP] 정확한 스크롤: {adjusted_scroll}px (원래 {scroll_needed}px)")
+
+                        if adjusted_scroll > 0:
+                            self.adb.scroll_down(adjusted_scroll)
+                        else:
+                            self.adb.scroll_up(abs(adjusted_scroll))
+                        time.sleep(0.3)
+
+                        element = self._find_element_by_text_hybrid(target, check_viewport=True)
+                        if element.get("found"):
+                            log(f"[발견] '{target}' y={element['center_y']} (MobileCDP 정밀 스크롤)")
+                            return element
+            else:
+                # MobileCDP 없으면 기존 여유분 스크롤
+                extra_scroll = random.randint(420, 550)
+                log(f"[5단계] 여유분 스크롤: {extra_scroll}px")
+                self.adb.scroll_down(extra_scroll)
+                time.sleep(random.uniform(0.2, 0.4))
 
             # 덤프해서 더보기 찾기 (하이브리드: CDP 우선)
             element = self._find_element_by_text_hybrid(target, check_viewport=True)
