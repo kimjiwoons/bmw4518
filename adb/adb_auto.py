@@ -536,6 +536,70 @@ class MobileCDP:
             log(f"[MobileCDP] 요소 찾기 오류: {e}", "ERROR")
             return {"found": False}
 
+    def debug_find_all_elements(self, text):
+        """디버그: 텍스트와 매칭되는 모든 요소 출력"""
+        if not self.connected:
+            return []
+
+        try:
+            js_code = f'''
+            (function() {{
+                var results = [];
+                var elements = document.querySelectorAll('*');
+                var viewportHeight = window.innerHeight;
+                var idx = 0;
+                for (var el of elements) {{
+                    var txt = el.textContent ? el.textContent.trim() : '';
+                    // 정확한 매칭 또는 포함 매칭
+                    if (txt === '{text}' || (txt.includes('{text}') && txt.length < 100)) {{
+                        var style = window.getComputedStyle(el);
+                        var rect = el.getBoundingClientRect();
+                        var isClickable = el.tagName === 'A' || el.tagName === 'BUTTON' ||
+                                        el.onclick !== null || style.cursor === 'pointer';
+
+                        results.push({{
+                            idx: idx++,
+                            tag: el.tagName,
+                            id: el.id || '',
+                            className: el.className ? el.className.substring(0, 50) : '',
+                            x: Math.round(rect.left + rect.width / 2),
+                            y: Math.round(rect.top + rect.height / 2),
+                            width: Math.round(rect.width),
+                            height: Math.round(rect.height),
+                            text: txt.substring(0, 30),
+                            textLen: txt.length,
+                            exactMatch: txt === '{text}',
+                            clickable: isClickable,
+                            visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
+                            inViewport: rect.top > 0 && rect.bottom < viewportHeight
+                        }});
+                    }}
+                }}
+                return {{viewportHeight: viewportHeight, count: results.length, elements: results}};
+            }})()
+            '''
+
+            result = self.send("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+
+            if result and "result" in result:
+                data = result["result"].get("value", {})
+                log(f"[DEBUG] viewport={data.get('viewportHeight')}, 매칭 요소 {data.get('count')}개:")
+                for el in data.get("elements", []):
+                    mark = "✓" if el.get("exactMatch") else " "
+                    vis = "V" if el.get("visible") else "H"
+                    vp = "IN" if el.get("inViewport") else "OUT"
+                    click = "C" if el.get("clickable") else "-"
+                    log(f"  [{mark}] #{el['idx']} <{el['tag']}> ({el['x']},{el['y']}) {el['width']}x{el['height']} [{vis}|{vp}|{click}] txt={el['textLen']}ch id={el.get('id','')[:15]} class={el.get('className','')[:20]}")
+                return data.get("elements", [])
+
+            return []
+        except Exception as e:
+            log(f"[DEBUG] 오류: {e}", "ERROR")
+            return []
+
     def find_link_by_domain(self, domain, viewport_only=True):
         """도메인으로 링크 찾기 → 좌표 반환 (읽기 전용!)
 
@@ -2427,6 +2491,10 @@ class NaverSearchAutomation:
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
+            # 디버그: 모든 매칭 요소 출력
+            if self.mobile_cdp and self.mobile_cdp.connected:
+                self.mobile_cdp.debug_find_all_elements(target)
+
             # 요소 찾기 (exact_match=True: 정확한 매칭으로 부모 요소 제외)
             element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
             if element.get("found"):
@@ -2436,11 +2504,19 @@ class NaverSearchAutomation:
             # 지나쳤으면 위로 300px씩 올리면서 찾기
             if element.get("out_of_viewport") and element.get("y", 0) < 0:
                 log(f"[5단계] 지나침 (y={element.get('y')}), 위로 300px씩 스크롤...")
-                for _ in range(20):
+                for scroll_i in range(20):
                     self.adb.scroll_up(300)
                     time.sleep(0.3)
+
+                    # 매 5번째 스크롤마다 디버그 출력
+                    if scroll_i % 5 == 4 and self.mobile_cdp and self.mobile_cdp.connected:
+                        self.mobile_cdp.debug_find_all_elements(target)
+
                     element = self._find_element_by_text_hybrid(target, check_viewport=True, exact_match=True)
                     if element.get("found"):
+                        # 클릭 전 디버그 출력
+                        if self.mobile_cdp and self.mobile_cdp.connected:
+                            self.mobile_cdp.debug_find_all_elements(target)
                         log(f"[발견] '{target}' y={element['center_y']}")
                         return element
             else:
