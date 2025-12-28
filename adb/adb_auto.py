@@ -1823,12 +1823,17 @@ class NaverSearchAutomation:
         self.cdp_info = cdp_info  # CDP 계산 결과
         self.browser = browser  # 사용할 브라우저
 
-        # 모바일 CDP 연결 (요소 찾기용 - 읽기 전용!)
+        # 모바일 CDP (브라우저 열린 후 연결됨)
         self.mobile_cdp = None
-        self._init_mobile_cdp()
+        self._mobile_cdp_initialized = False
 
     def _init_mobile_cdp(self):
-        """모바일 브라우저 CDP 초기화 (읽기 전용)"""
+        """모바일 브라우저 CDP 초기화 (브라우저 열린 후 호출!)"""
+        if self._mobile_cdp_initialized:
+            return  # 이미 시도함
+
+        self._mobile_cdp_initialized = True
+
         from config import BROWSERS
         browser_info = BROWSERS.get(self.browser, {})
 
@@ -1952,6 +1957,11 @@ class NaverSearchAutomation:
 
         if not self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=3):
             return False
+
+        # 브라우저 열린 후 MobileCDP 연결 (요소 찾기용)
+        time.sleep(1)  # 페이지 로드 대기
+        self._init_mobile_cdp()
+
         return True
     
     # ========================================
