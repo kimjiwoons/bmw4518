@@ -2010,8 +2010,8 @@ class ADBController:
             # text="...검색결과 더보기..." 포함
             node_pattern = rf'<node[^>]+text="([^"]*{re.escape(text)}[^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/?>'
         else:
-            # text="검색결과 더보기" 정확히
-            node_pattern = rf'<node[^>]+text="{re.escape(text)}"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/?>'
+            # text="검색결과 더보기" 정확히 (캡처 그룹 포함)
+            node_pattern = rf'<node[^>]+text="({re.escape(text)})"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/?>'
         
         match = re.search(node_pattern, xml)
         
@@ -2035,7 +2035,7 @@ class ADBController:
         if partial:
             node_pattern2 = rf'<node[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]+text="([^"]*{re.escape(text)}[^"]*)"[^>]*/?>'
         else:
-            node_pattern2 = rf'<node[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]+text="{re.escape(text)}"[^>]*/?>'
+            node_pattern2 = rf'<node[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]+text="({re.escape(text)})"[^>]*/?>'
         
         match = re.search(node_pattern2, xml)
         
