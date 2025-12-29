@@ -24,6 +24,7 @@
 | 4 | 모바일 CDP 전체 비활성화 | adb/adb_auto.py | 탐지 위험 제거 위해 모든 브라우저 CDP 연결 비활성화 | 성공 |
 | 5 | test_ocr.py 삭제 | adb/test_ocr.py | OCR 테스트 파일 제거 | 성공 |
 | 6 | step7 삼성 브라우저 도메인 찾기 | adb/adb_auto.py | 템플릿 매칭으로 도메인 찾기, 서브링크 영역 제외, 무한 재시도 로직 구현 | 성공 |
+| 7 | 삼성 브라우저 "계속" 버튼 처리 | adb/adb_auto.py | first_run_buttons에 "계속" 추가, _wait_for_page_load() 메서드 추가 | 성공 |
 
 ---
 
@@ -34,6 +35,7 @@
 | easyocr 메모리 오류 | GPU 메모리 부족 | OpenCV 템플릿 매칭으로 대체 |
 | pytesseract 한글 인식 불량 | 한글 글자 분리됨 | 템플릿 매칭으로 대체 |
 | CDP 탐지 위험 | 서버에서 CDP 연결 감지 가능성 | 모바일 CDP 전체 비활성화 |
+| 삼성 브라우저 "계속" 버튼 | 첫 화면에 "계속" 버튼 미처리 | first_run_buttons에 추가 + _wait_for_page_load() |
 
 ---
 

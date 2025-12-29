@@ -1833,6 +1833,7 @@ class ADBController:
                 "No, thanks",
             ],
             "samsung": [
+                "계속",  # Continue 버튼 (첫 화면)
                 "동의",
                 "시작",
                 "Start",
@@ -2360,7 +2361,43 @@ class NaverSearchAutomation:
         self._init_mobile_cdp()
 
         return True
-    
+
+    # ========================================
+    # 페이지 로드 대기 (삼성 브라우저용)
+    # ========================================
+    def _wait_for_page_load(self, max_wait=10):
+        """
+        삼성 브라우저: 검색창 클릭 전 페이지 로드 대기
+        - "계속" 버튼 처리
+        - 네이버 페이지 로드 확인
+        """
+        log("[대기] 삼성 브라우저 페이지 로드 확인 중...")
+
+        for attempt in range(max_wait):
+            time.sleep(1)
+            xml = self.adb.get_screen_xml(force=True)
+
+            if not xml:
+                continue
+
+            # "계속" 버튼 있으면 클릭
+            continue_btn = self.adb.find_element_by_text("계속", partial=False, xml=xml)
+            if continue_btn.get("found"):
+                log("[대기] '계속' 버튼 발견, 클릭...")
+                self.adb.tap_element(continue_btn)
+                time.sleep(1)
+                continue
+
+            # 네이버 로드 확인 (검색, naver 텍스트)
+            if "naver" in xml.lower() or "검색" in xml or "네이버" in xml:
+                log("[대기] 네이버 페이지 로드 완료!")
+                return True
+
+            log(f"[대기] 페이지 로드 중... ({attempt + 1}/{max_wait})")
+
+        log("[대기] 타임아웃, 진행 시도...")
+        return True
+
     # ========================================
     # 2단계: 검색창 클릭 (CDP 로직 동일)
     # ========================================
@@ -2378,6 +2415,9 @@ class NaverSearchAutomation:
 
         if use_coordinate_fallback:
             log(f"[좌표 모드] {self.browser} 브라우저는 좌표 기반 클릭 사용")
+            # 삼성 브라우저: 페이지 로드 대기 (검색창 클릭 전)
+            if self.browser == "samsung":
+                self._wait_for_page_load()
 
         for retry in range(1, max_retry + 1):
             # 5번마다 메인 재이동 (CDP 동일)
