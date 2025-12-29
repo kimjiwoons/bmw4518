@@ -29,6 +29,7 @@
 | 9 | 삼성 브라우저 "계속하기" 버튼 + 스와이프 새로고침 | adb/adb_auto.py | first_run_buttons에 "계속하기" 추가, 새로고침을 스와이프(pull-to-refresh)로 변경 | 성공 |
 | 10 | find_element_by_text 정규식 수정 | adb/adb_auto.py | partial=False일 때 텍스트 캡처 그룹 누락 버그 수정 | 성공 |
 | 11 | 크롬 step7 스크롤 50% 로직 | adb/adb_auto.py | CDP 계산값 50%만 먼저 스크롤, 이후 스크롤하면서 찾기 (30회) | 성공 |
+| 12 | 크롬 첫 실행 + 번역 팝업 처리 | adb/adb_auto.py | "Use without an account" 버튼 추가, 번역 팝업 화면 하단 탭으로 닫기 | 성공 |
 
 ---
 
@@ -43,6 +44,8 @@
 | JS 미로드 시 검색창 클릭 실패 | 검색창 클릭해도 입력창 안 뜸 | 템플릿 매칭으로 확인 + 새로고침 + 무한 재시도 |
 | find_element_by_text 에러 | partial=False 정규식에 텍스트 캡처 그룹 없음 | 캡처 그룹 추가 (5개 → 5개 통일) |
 | 크롬 step7 사이트 못 찾음 | CDP 계산값대로 스크롤하면 사이트가 이미 지나감 | 50%만 먼저 스크롤 후 스크롤하면서 찾기 |
+| 크롬 첫 실행 화면 처리 안 됨 | "Use without an account" 버튼 미등록 | first_run_buttons에 추가 |
+| 크롬 번역 팝업 | 초기화 시 번역 설정 리셋 | 화면 하단 탭으로 팝업 닫기 |
 
 ---
 
