@@ -1882,6 +1882,17 @@ class ADBController:
             if not xml:
                 continue
 
+            # 크롬: 번역 팝업 먼저 닫기 (화면 중앙 탭)
+            if browser == "chrome" and ("Translate" in xml or "번역" in xml):
+                log("[ADB] 번역 팝업 감지, 화면 중앙 탭으로 닫기...")
+                dismiss_x = self.screen_width // 2
+                dismiss_y = int(self.screen_height * 0.5)
+                self.tap(dismiss_x, dismiss_y)
+                time.sleep(0.5)
+                xml = self.get_screen_xml(force=True)  # 다시 읽기
+                if not xml:
+                    continue
+
             # 네이버 페이지가 로드되면 설정 완료
             if "naver" in xml.lower() or "검색" in xml:
                 log("[ADB] 브라우저 설정 완료, 네이버 페이지 로드됨")
