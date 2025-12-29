@@ -4,7 +4,7 @@
 - 프로젝트명: GeeLark ADB 네이버 검색 자동화
 - 시작일: 2025-12-29
 - 마지막 업데이트: 2025-12-29
-- 현재 세션: #2
+- 현재 세션: #3
 
 ---
 
@@ -30,6 +30,8 @@
 | 10 | find_element_by_text 정규식 수정 | adb/adb_auto.py | partial=False일 때 텍스트 캡처 그룹 누락 버그 수정 | 성공 |
 | 11 | 크롬 step7 스크롤 50% 로직 | adb/adb_auto.py | CDP 계산값 50%만 먼저 스크롤, 이후 스크롤하면서 찾기 (30회) | 성공 |
 | 12 | 크롬 첫 실행 + 번역 팝업 처리 | adb/adb_auto.py | "Use without an account" 버튼 추가, 번역 팝업 화면 하단 탭으로 닫기 | 성공 |
+| 13 | 크롬 번역 팝업 우선 처리 | adb/adb_auto.py | 첫 실행 버튼 찾기 전 번역 팝업 먼저 감지/닫기 | 성공 |
+| 14 | 브라우저별 스크롤 보정값 설정 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG 추가 (scroll_factor, search_direction) | 성공 |
 
 ---
 
@@ -46,6 +48,7 @@
 | 크롬 step7 사이트 못 찾음 | CDP 계산값대로 스크롤하면 사이트가 이미 지나감 | 50%만 먼저 스크롤 후 스크롤하면서 찾기 |
 | 크롬 첫 실행 화면 처리 안 됨 | "Use without an account" 버튼 미등록 | first_run_buttons에 추가 |
 | 크롬 번역 팝업 | 초기화 시 번역 설정 리셋 | 화면 하단 탭으로 팝업 닫기 |
+| 브라우저별 스크롤 차이 | 삼성:지나침, 크롬:부족 | BROWSER_SCROLL_CONFIG로 보정값/찾기방향 설정 |
 
 ---
 
@@ -81,6 +84,15 @@
 - `adb/template_domain.png`: 도메인 영역 템플릿 (step7용) - 생성 필요
 - `adb/template_sublink.png`: 서브링크 영역 템플릿 (클릭 제외용) - 생성 필요
 - 임계값: 0.7
+
+### 브라우저별 스크롤 보정 (BROWSER_SCROLL_CONFIG)
+```python
+"samsung": {"scroll_factor": 0.9, "search_direction": "up"},   # 지나침 → 90%, 위로 찾기
+"chrome":  {"scroll_factor": 1.1, "search_direction": "down"}, # 부족함 → 110%, 아래로 찾기
+"opera":   {"scroll_factor": 1.1, "search_direction": "down"},
+"edge":    {"scroll_factor": 1.1, "search_direction": "down"},
+"firefox": {"scroll_factor": 1.0, "search_direction": "down"},
+```
 
 ### ADB 명령어
 ```bash
