@@ -25,6 +25,7 @@
 | 5 | test_ocr.py 삭제 | adb/test_ocr.py | OCR 테스트 파일 제거 | 성공 |
 | 6 | step7 삼성 브라우저 도메인 찾기 | adb/adb_auto.py | 템플릿 매칭으로 도메인 찾기, 서브링크 영역 제외, 무한 재시도 로직 구현 | 성공 |
 | 7 | 삼성 브라우저 "계속" 버튼 처리 | adb/adb_auto.py | first_run_buttons에 "계속" 추가, _wait_for_page_load() 메서드 추가 | 성공 |
+| 8 | 삼성 브라우저 페이지 로드 템플릿 매칭 | adb/adb_auto.py | _wait_for_page_load() XML→템플릿 매칭 변경, step2 무한 재시도 로직 | 성공 |
 
 ---
 
@@ -36,6 +37,7 @@
 | pytesseract 한글 인식 불량 | 한글 글자 분리됨 | 템플릿 매칭으로 대체 |
 | CDP 탐지 위험 | 서버에서 CDP 연결 감지 가능성 | 모바일 CDP 전체 비활성화 |
 | 삼성 브라우저 "계속" 버튼 | 첫 화면에 "계속" 버튼 미처리 | first_run_buttons에 추가 + _wait_for_page_load() |
+| JS 미로드 시 검색창 클릭 실패 | 검색창 클릭해도 입력창 안 뜸 | 템플릿 매칭으로 확인 + 새로고침 + 무한 재시도 |
 
 ---
 
@@ -49,7 +51,7 @@
 - [x] step7: 도메인 찾기 (삼성 브라우저용 템플릿 매칭 방식 구현) ✓
 - [ ] step4_5: 통합에서 도메인 찾기 (삼성 브라우저용)
 - [ ] 도메인 텍스트 → 이미지 생성 → 템플릿 매칭 방식 검토
-- [ ] 템플릿 파일 생성: template_domain.png, template_sublink.png
+- [ ] 템플릿 파일 생성: template_search.png (검색창), template_domain.png, template_sublink.png
 
 ---
 
@@ -67,6 +69,7 @@
 
 ### 템플릿 파일
 - `adb/template_more.png`: "검색결과 더보기" 버튼 템플릿
+- `adb/template_search.png`: 네이버 검색창 템플릿 (페이지 로드 확인용) - 생성 필요
 - `adb/template_domain.png`: 도메인 영역 템플릿 (step7용) - 생성 필요
 - `adb/template_sublink.png`: 서브링크 영역 템플릿 (클릭 제외용) - 생성 필요
 - 임계값: 0.7

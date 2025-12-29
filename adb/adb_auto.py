@@ -2365,38 +2365,43 @@ class NaverSearchAutomation:
     # ========================================
     # 페이지 로드 대기 (삼성 브라우저용)
     # ========================================
-    def _wait_for_page_load(self, max_wait=10):
+    def _wait_for_page_load(self):
         """
         삼성 브라우저: 검색창 클릭 전 페이지 로드 대기
-        - "계속" 버튼 처리
-        - 네이버 페이지 로드 확인
+        - "계속" 버튼 처리 (무한 반복)
+        - 검색창 템플릿 매칭으로 로드 확인 (무한 반복)
         """
         log("[대기] 삼성 브라우저 페이지 로드 확인 중...")
+        template_path = os.path.join(os.path.dirname(__file__), "template_search.png")
 
-        for attempt in range(max_wait):
+        attempt = 0
+        while True:  # 무한 반복
+            attempt += 1
             time.sleep(1)
+
+            # "계속" 버튼 확인 (XML로)
             xml = self.adb.get_screen_xml(force=True)
+            if xml:
+                continue_btn = self.adb.find_element_by_text("계속", partial=False, xml=xml)
+                if continue_btn.get("found"):
+                    log("[대기] '계속' 버튼 발견, 클릭...")
+                    self.adb.tap_element(continue_btn)
+                    time.sleep(1)
+                    continue
 
-            if not xml:
-                continue
-
-            # "계속" 버튼 있으면 클릭
-            continue_btn = self.adb.find_element_by_text("계속", partial=False, xml=xml)
-            if continue_btn.get("found"):
-                log("[대기] '계속' 버튼 발견, 클릭...")
-                self.adb.tap_element(continue_btn)
-                time.sleep(1)
-                continue
-
-            # 네이버 로드 확인 (검색, naver 텍스트)
-            if "naver" in xml.lower() or "검색" in xml or "네이버" in xml:
-                log("[대기] 네이버 페이지 로드 완료!")
+            # 검색창 템플릿 매칭으로 페이지 로드 확인
+            if os.path.exists(template_path):
+                result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+                if result.get("found"):
+                    log("[대기] 검색창 템플릿 발견! 페이지 로드 완료")
+                    return True
+                else:
+                    log(f"[대기] 검색창 템플릿 없음, 대기 중... (#{attempt})")
+            else:
+                # 템플릿 파일 없으면 5초 대기 후 진행
+                log(f"[대기] template_search.png 없음, 5초 대기 후 진행...")
+                time.sleep(5)
                 return True
-
-            log(f"[대기] 페이지 로드 중... ({attempt + 1}/{max_wait})")
-
-        log("[대기] 타임아웃, 진행 시도...")
-        return True
 
     # ========================================
     # 2단계: 검색창 클릭 (CDP 로직 동일)
@@ -2413,10 +2418,15 @@ class NaverSearchAutomation:
         coordinate_only_browsers = ["samsung", "firefox", "opera", "edge"]
         use_coordinate_fallback = self.browser in coordinate_only_browsers
 
+        # 삼성 브라우저: 무한 재시도 (디버깅용)
+        is_samsung = self.browser == "samsung"
+        if is_samsung:
+            max_retry = 999999  # 사실상 무한
+
         if use_coordinate_fallback:
             log(f"[좌표 모드] {self.browser} 브라우저는 좌표 기반 클릭 사용")
             # 삼성 브라우저: 페이지 로드 대기 (검색창 클릭 전)
-            if self.browser == "samsung":
+            if is_samsung:
                 self._wait_for_page_load()
 
         for retry in range(1, max_retry + 1):
@@ -2481,11 +2491,33 @@ class NaverSearchAutomation:
                     time.sleep(0.3)
                     return True
 
-            # 좌표 모드일 때: 검색창 클릭 후 딜레이만 주고 성공
+            # 좌표 모드일 때 (삼성 브라우저 등)
             if use_coordinate_fallback:
                 time.sleep(1.5)  # 검색 모드 전환 대기
-                log("[성공] 검색 모드 전환됨! (좌표 기반)")
-                return True
+
+                # 삼성 브라우저: 템플릿 매칭으로 검색 모드 전환 확인
+                if is_samsung:
+                    template_path = os.path.join(os.path.dirname(__file__), "template_search.png")
+                    if os.path.exists(template_path):
+                        result = self.adb.find_template(template_path, threshold=0.7, do_click=False)
+                        if result.get("found"):
+                            # 검색창 템플릿이 아직 보임 = 클릭 실패 (JS 미로드)
+                            log(f"[실패] 검색창 아직 보임 (JS 미로드), 새로고침 후 재시도... (#{retry})")
+                            # 새로고침
+                            self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=1)
+                            time.sleep(2)
+                            self._wait_for_page_load()  # 다시 로드 대기
+                            continue  # 무한 재시도
+                        else:
+                            # 검색창 템플릿 안 보임 = 검색 모드 전환됨
+                            log("[성공] 검색 모드 전환됨! (템플릿 확인)")
+                            return True
+                    else:
+                        log("[성공] 검색 모드 전환됨! (좌표 기반, 템플릿 없음)")
+                        return True
+                else:
+                    log("[성공] 검색 모드 전환됨! (좌표 기반)")
+                    return True
 
             time.sleep(0.5)
 
