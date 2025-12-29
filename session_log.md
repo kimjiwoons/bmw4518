@@ -26,6 +26,7 @@
 | 6 | step7 삼성 브라우저 도메인 찾기 | adb/adb_auto.py | 템플릿 매칭으로 도메인 찾기, 서브링크 영역 제외, 무한 재시도 로직 구현 | 성공 |
 | 7 | 삼성 브라우저 "계속" 버튼 처리 | adb/adb_auto.py | first_run_buttons에 "계속" 추가, _wait_for_page_load() 메서드 추가 | 성공 |
 | 8 | 삼성 브라우저 페이지 로드 템플릿 매칭 | adb/adb_auto.py | _wait_for_page_load() XML→템플릿 매칭 변경, step2 무한 재시도 로직 | 성공 |
+| 9 | 삼성 브라우저 "계속하기" 버튼 + 스와이프 새로고침 | adb/adb_auto.py | first_run_buttons에 "계속하기" 추가, 새로고침을 스와이프(pull-to-refresh)로 변경 | 성공 |
 
 ---
 
