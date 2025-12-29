@@ -28,8 +28,8 @@ ADB_CONFIG = {
 PHONES = {
     "1": {
         "name": "테스트폰1",
-        "adb_address": "98.98.125.37:21306",
-        "login_code": "4578a2",  # GeeLark 로그인 코드
+        "adb_address": "98.98.125.37:20920",
+        "login_code": "3f5d0d",  # GeeLark 로그인 코드
         "browser": "chrome",
         "screen_width": 720,
         "screen_height": 1440,
