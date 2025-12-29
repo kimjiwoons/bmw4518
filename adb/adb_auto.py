@@ -1821,16 +1821,18 @@ class ADBController:
         # 브라우저별 첫 실행 버튼 텍스트
         first_run_buttons = {
             "chrome": [
+                "Use without an account",  # 계정 없이 사용 (영어)
+                "계정 없이 사용",  # 계정 없이 사용 (한글)
                 "동의 및 계속",  # Accept & Continue (한글)
                 "Accept & continue",  # Accept & Continue (영어)
                 "동의",
                 "계속",
-                "아니요",  # No thanks for sync
+                "아니요",  # No thanks for sync / translate popup
                 "No thanks",
+                "No, thanks",
                 "건너뛰기",
                 "Skip",
                 "사용 안함",
-                "No, thanks",
             ],
             "samsung": [
                 "계속",  # Continue 버튼 (첫 화면)
@@ -1911,6 +1913,17 @@ class ADBController:
                 log(f"[ADB] 첫 실행 버튼 없음, 대기 중... ({attempt + 1}/{max_attempts})")
 
         log("[ADB] 첫 실행 설정 처리 완료 (또는 타임아웃)")
+
+        # 크롬 번역 팝업 닫기 (화면 하단 탭)
+        if browser == "chrome":
+            time.sleep(0.5)
+            # 번역 팝업이 상단에 나오므로 화면 중앙 하단 탭해서 닫기
+            dismiss_y = int(self.screen_height * 0.7)
+            dismiss_x = self.screen_width // 2
+            log(f"[ADB] 번역 팝업 닫기 시도 (탭: {dismiss_x}, {dismiss_y})")
+            self.tap(dismiss_x, dismiss_y)
+            time.sleep(0.3)
+
         return True
 
     def open_url(self, url, browser="chrome", handle_first_run=True, max_retry=3):
