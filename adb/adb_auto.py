@@ -2908,13 +2908,181 @@ class NaverSearchAutomation:
         return False
 
     # ========================================
+    # 7단계 삼성 브라우저: 템플릿 매칭으로 도메인 찾기
+    # ========================================
+    def _step7_samsung_template_matching(self, domain):
+        """삼성 브라우저 전용: 템플릿 매칭으로 도메인 찾아서 클릭
+
+        로직:
+        1. 스크롤 계산값의 50%만 스크롤 (랜덤 보상값 적용)
+        2. 스크롤하면서 도메인 템플릿 매칭
+        3. 찾으면 서브링크 영역 제외하고 랜덤 클릭
+        4. 페이지 전환 확인, 실패 시 무한 재시도
+        """
+        log("[7단계] 삼성 브라우저 - 템플릿 매칭 모드")
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        domain_template = os.path.join(script_dir, "template_domain.png")
+        sublink_template = os.path.join(script_dir, "template_sublink.png")
+
+        # 템플릿 파일 확인
+        if not os.path.exists(domain_template):
+            log(f"[ERROR] 도메인 템플릿 없음: {domain_template}", "ERROR")
+            log("[INFO] template_domain.png 파일을 adb/ 폴더에 추가하세요")
+            return False
+
+        # 1단계: 스크롤 계산값의 50%만 스크롤
+        if self.cdp_info and self.cdp_info.get("domain_scroll_count", 0) > 0:
+            full_scroll = self.cdp_info["domain_scroll_count"]
+            half_scroll = max(1, full_scroll // 2)  # 50%
+            log(f"[7단계] 계산값 {full_scroll}의 50% = {half_scroll}번 스크롤")
+        else:
+            half_scroll = 5  # 기본값
+            log(f"[7단계] 스크롤 횟수 기본값: {half_scroll}번")
+
+        # 스크롤 오차 초기화
+        self.adb.reset_scroll_debt()
+
+        # 50% 스크롤 실행
+        for i in range(half_scroll):
+            self.adb.scroll_down(compensated=True)
+
+            if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
+                pause = random.uniform(READING_PAUSE_CONFIG["min_time"], READING_PAUSE_CONFIG["max_time"])
+                log(f"읽기 멈춤: {pause:.1f}초")
+                time.sleep(pause)
+            else:
+                time.sleep(random.uniform(0.1, 0.2))
+
+            if (i + 1) % 5 == 0:
+                log(f"[7단계] 스크롤 {i + 1}/{half_scroll}...")
+
+        log(f"[7단계] 50% 스크롤 완료, 오차: {self.adb.get_scroll_debt()}px")
+
+        # 2단계: 스크롤하면서 도메인 템플릿 매칭
+        log("[7단계] 템플릿 매칭으로 도메인 찾기 시작...")
+        max_scroll_attempts = 50  # 최대 스크롤 횟수
+
+        for attempt in range(max_scroll_attempts):
+            # 도메인 템플릿 매칭
+            result = self.adb.find_template(domain_template, threshold=0.7, do_click=False)
+
+            if result.get("found"):
+                log(f"[발견] 도메인 템플릿 매칭 성공! 위치: ({result['x']}, {result['y']})")
+
+                # 3단계: 서브링크 영역 제외하고 클릭 영역 계산
+                click_x, click_y = self._calculate_click_position(
+                    result, sublink_template
+                )
+
+                # 4단계: 무한 재시도 클릭
+                return self._click_domain_with_retry(click_x, click_y, domain_template)
+
+            # 못 찾으면 위로 스크롤 (200~300px 랜덤)
+            scroll_amount = random.randint(200, 300)
+            self.adb.scroll_up(scroll_amount)
+            time.sleep(random.uniform(0.3, 0.5))
+
+            if (attempt + 1) % 10 == 0:
+                log(f"[7단계] 스크롤하며 찾는 중... {attempt + 1}/{max_scroll_attempts}")
+
+        log("[실패] 도메인 템플릿 못 찾음", "ERROR")
+        return False
+
+    def _calculate_click_position(self, domain_result, sublink_template):
+        """클릭 가능 영역 계산 (서브링크 제외)
+
+        Args:
+            domain_result: 도메인 템플릿 매칭 결과 {x, y, bounds: (x1,y1,x2,y2), ...}
+            sublink_template: 서브링크 템플릿 파일 경로
+
+        Returns:
+            (click_x, click_y): 클릭할 좌표
+        """
+        x1, y1, x2, y2 = domain_result["bounds"]
+        domain_width = x2 - x1
+        domain_height = y2 - y1
+
+        # 서브링크 템플릿 매칭 시도
+        exclude_y_start = y2  # 기본값: 서브링크 없으면 전체 영역 사용
+
+        if os.path.exists(sublink_template):
+            sublink_result = self.adb.find_template(sublink_template, threshold=0.7, do_click=False)
+
+            if sublink_result.get("found"):
+                sx1, sy1, sx2, sy2 = sublink_result["bounds"]
+                log(f"[서브링크] 제외 영역: ({sx1},{sy1})-({sx2},{sy2})")
+
+                # 서브링크가 도메인 영역 내에 있으면 제외
+                if sy1 > y1 and sy1 < y2:
+                    exclude_y_start = sy1
+                    log(f"[클릭영역] y: {y1} ~ {exclude_y_start} (서브링크 위)")
+        else:
+            log("[INFO] 서브링크 템플릿 없음, 상단 70% 영역만 클릭")
+            exclude_y_start = y1 + int(domain_height * 0.7)
+
+        # 클릭 가능 영역 내에서 랜덤 좌표 선택
+        margin_x = int(domain_width * 0.1)
+        margin_y = int((exclude_y_start - y1) * 0.1)
+
+        click_x = random.randint(x1 + margin_x, x2 - margin_x)
+        click_y = random.randint(y1 + margin_y, exclude_y_start - margin_y)
+
+        log(f"[클릭좌표] 랜덤 선택: ({click_x}, {click_y})")
+        return click_x, click_y
+
+    def _click_domain_with_retry(self, click_x, click_y, domain_template):
+        """도메인 클릭 후 페이지 전환 확인, 실패 시 무한 재시도
+
+        Args:
+            click_x, click_y: 클릭할 좌표
+            domain_template: 도메인 템플릿 (사라졌는지 확인용)
+
+        Returns:
+            True: 페이지 전환 성공
+            (무한 루프로 실패 시 여기서 멈춤 - 디버깅용)
+        """
+        retry_count = 0
+
+        while True:  # 무한 재시도
+            retry_count += 1
+            log(f"[클릭] 시도 #{retry_count}: ({click_x}, {click_y})")
+
+            # 클릭
+            self.adb.tap(click_x, click_y, randomize=False)
+            time.sleep(2.0)  # 페이지 전환 대기
+
+            # 페이지 전환 확인: 도메인 템플릿이 사라졌는지 체크
+            result = self.adb.find_template(domain_template, threshold=0.7, do_click=False)
+
+            if not result.get("found"):
+                log("[성공] 도메인 템플릿 사라짐 - 페이지 전환 완료!")
+                random_delay(1.0, 2.0)
+                return True
+
+            # 템플릿이 아직 있으면 클릭 실패 (빈 곳 클릭했거나 링크 아님)
+            log(f"[재시도] 페이지 전환 안 됨, 다시 클릭... (시도 #{retry_count})")
+
+            # 새로운 클릭 위치 계산 (약간 다른 위치로)
+            click_x += random.randint(-20, 20)
+            click_y += random.randint(-20, 20)
+
+            time.sleep(random.uniform(0.5, 1.0))
+
+    # ========================================
     # 7단계: 더보기 페이지에서 도메인 찾기
     # ========================================
     def step7_find_domain(self, domain):
         log("=" * 50)
         log(f"[7단계] '{domain}' 찾기")
         log("=" * 50)
-        
+
+        # ========================================
+        # 삼성 브라우저: 템플릿 매칭으로 도메인 찾기
+        # ========================================
+        if self.browser == "samsung" and TEMPLATE_MATCHING_AVAILABLE:
+            return self._step7_samsung_template_matching(domain)
+
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("domain_scroll_count", -1) >= 0:
             cdp_scroll = self.cdp_info["domain_scroll_count"]
