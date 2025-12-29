@@ -1834,6 +1834,7 @@ class ADBController:
             ],
             "samsung": [
                 "계속",  # Continue 버튼 (첫 화면)
+                "계속하기",  # Continue 버튼 (다른 형태)
                 "동의",
                 "시작",
                 "Start",
@@ -2379,15 +2380,20 @@ class NaverSearchAutomation:
             attempt += 1
             time.sleep(1)
 
-            # "계속" 버튼 확인 (XML로)
+            # "계속" / "계속하기" 버튼 확인 (XML로)
             xml = self.adb.get_screen_xml(force=True)
             if xml:
-                continue_btn = self.adb.find_element_by_text("계속", partial=False, xml=xml)
-                if continue_btn.get("found"):
-                    log("[대기] '계속' 버튼 발견, 클릭...")
-                    self.adb.tap_element(continue_btn)
-                    time.sleep(1)
-                    continue
+                # 여러 버튼 텍스트 체크
+                for btn_text in ["계속", "계속하기"]:
+                    continue_btn = self.adb.find_element_by_text(btn_text, partial=False, xml=xml)
+                    if continue_btn.get("found"):
+                        log(f"[대기] '{btn_text}' 버튼 발견, 클릭...")
+                        self.adb.tap_element(continue_btn)
+                        time.sleep(1)
+                        break
+                else:
+                    # 버튼 없으면 아래 템플릿 확인으로
+                    pass
 
             # 검색창 템플릿 매칭으로 페이지 로드 확인
             if os.path.exists(template_path):
@@ -2503,9 +2509,12 @@ class NaverSearchAutomation:
                         if result.get("found"):
                             # 검색창 템플릿이 아직 보임 = 클릭 실패 (JS 미로드)
                             log(f"[실패] 검색창 아직 보임 (JS 미로드), 새로고침 후 재시도... (#{retry})")
-                            # 새로고침
-                            self.adb.open_url(NAVER_CONFIG["start_url"], browser=self.browser, max_retry=1)
-                            time.sleep(2)
+                            # 스와이프 새로고침 (pull-to-refresh)
+                            center_x = self.adb.screen_width // 2
+                            start_y = int(self.adb.screen_height * 0.2)  # 화면 상단 20%
+                            end_y = int(self.adb.screen_height * 0.7)    # 화면 하단 70%
+                            self.adb.swipe(center_x, start_y, center_x, end_y, 500)
+                            time.sleep(3)  # 새로고침 대기
                             self._wait_for_page_load()  # 다시 로드 대기
                             continue  # 무한 재시도
                         else:
