@@ -4,14 +4,14 @@
 - 프로젝트명: GeeLark ADB 네이버 검색 자동화
 - 시작일: 2025-12-29
 - 마지막 업데이트: 2025-12-29
-- 현재 세션: #1
+- 현재 세션: #2
 
 ---
 
 ## 프로젝트 개요
 
 네이버 모바일 검색에서 특정 도메인을 찾아 클릭하는 SEO 자동화 도구.
-삼성 브라우저에서 CDP 좌표 불일치 문제로 템플릿 매칭 방식으로 전환 중.
+삼성 브라우저: CDP 비활성화, 순수 ADB + 템플릿 매칭 방식으로 동작 (완료).
 
 ---
 
@@ -27,6 +27,7 @@
 | 7 | 삼성 브라우저 "계속" 버튼 처리 | adb/adb_auto.py | first_run_buttons에 "계속" 추가, _wait_for_page_load() 메서드 추가 | 성공 |
 | 8 | 삼성 브라우저 페이지 로드 템플릿 매칭 | adb/adb_auto.py | _wait_for_page_load() XML→템플릿 매칭 변경, step2 무한 재시도 로직 | 성공 |
 | 9 | 삼성 브라우저 "계속하기" 버튼 + 스와이프 새로고침 | adb/adb_auto.py | first_run_buttons에 "계속하기" 추가, 새로고침을 스와이프(pull-to-refresh)로 변경 | 성공 |
+| 10 | find_element_by_text 정규식 수정 | adb/adb_auto.py | partial=False일 때 텍스트 캡처 그룹 누락 버그 수정 | 성공 |
 
 ---
 
@@ -39,6 +40,7 @@
 | CDP 탐지 위험 | 서버에서 CDP 연결 감지 가능성 | 모바일 CDP 전체 비활성화 |
 | 삼성 브라우저 "계속" 버튼 | 첫 화면에 "계속" 버튼 미처리 | first_run_buttons에 추가 + _wait_for_page_load() |
 | JS 미로드 시 검색창 클릭 실패 | 검색창 클릭해도 입력창 안 뜸 | 템플릿 매칭으로 확인 + 새로고침 + 무한 재시도 |
+| find_element_by_text 에러 | partial=False 정규식에 텍스트 캡처 그룹 없음 | 캡처 그룹 추가 (5개 → 5개 통일) |
 
 ---
 
