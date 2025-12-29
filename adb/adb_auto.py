@@ -38,7 +38,7 @@ from config import (
     PHONES, ADB_CONFIG, NAVER_CONFIG,
     SCROLL_CONFIG, TOUCH_CONFIG, TYPING_CONFIG, WAIT_CONFIG,
     COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT,
-    CDP_CONFIG, DEBUG_CONFIG
+    CDP_CONFIG, DEBUG_CONFIG, BROWSER_SCROLL_CONFIG
 )
 
 
@@ -3192,15 +3192,20 @@ class NaverSearchAutomation:
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("domain_scroll_count", -1) >= 0:
             cdp_scroll = self.cdp_info["domain_scroll_count"]
 
-            # 50%만 먼저 스크롤 (사이트가 계산값보다 위에 있을 수 있음)
-            half_scroll = cdp_scroll // 2
-            log(f"[CDP] 계산값: {cdp_scroll}번 → 50%만 먼저: {half_scroll}번")
+            # 브라우저별 보정값 적용
+            browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {"scroll_factor": 1.0, "search_direction": "down"})
+            scroll_factor = browser_config.get("scroll_factor", 1.0)
+            search_direction = browser_config.get("search_direction", "down")
+
+            # 보정값 적용한 스크롤 횟수
+            adjusted_scroll = int(cdp_scroll * scroll_factor)
+            log(f"[CDP] 계산값: {cdp_scroll}번 × 보정({scroll_factor}) = {adjusted_scroll}번, 찾기방향: {search_direction}")
 
             # 스크롤 오차 초기화
             self.adb.reset_scroll_debt()
 
-            # 50%만 빠르게 스크롤 (덤프 없이)
-            for i in range(half_scroll):
+            # 보정값 적용된 횟수만큼 스크롤 (덤프 없이)
+            for i in range(adjusted_scroll):
                 self.adb.scroll_down(compensated=True)
 
                 if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
@@ -3211,12 +3216,12 @@ class NaverSearchAutomation:
                     time.sleep(random.uniform(0.1, 0.2))
 
                 if (i + 1) % 10 == 0:
-                    log(f"[7단계] 스크롤 {i + 1}/{half_scroll}...")
+                    log(f"[7단계] 스크롤 {i + 1}/{adjusted_scroll}...")
 
-            log(f"[CDP] 50% 스크롤 완료, 이제 스크롤하면서 찾기...")
+            log(f"[CDP] 스크롤 완료, {search_direction} 방향으로 찾기...")
 
-            # 스크롤하면서 도메인 찾기 (나머지 50% + 추가분)
-            return self._find_and_click_domain_final(domain)
+            # 스크롤하면서 도메인 찾기 (search_direction 전달)
+            return self._find_and_click_domain_final(domain, search_direction)
         
         # CDP 없거나 도메인 못 찾은 경우 → 기존 방식 (페이지별 탐색)
         log("[7단계] 기존 방식 (CDP 없음)")
@@ -3243,8 +3248,13 @@ class NaverSearchAutomation:
         log(f"[실패] {domain} 못 찾음 ({max_page}페이지까지)", "ERROR")
         return False
     
-    def _find_and_click_domain_final(self, domain):
-        """CDP 스크롤 후 도메인 찾아서 클릭 (하이브리드: MobileCDP 우선)"""
+    def _find_and_click_domain_final(self, domain, search_direction="down"):
+        """CDP 스크롤 후 도메인 찾아서 클릭 (하이브리드: MobileCDP 우선)
+
+        Args:
+            domain: 찾을 도메인
+            search_direction: 스크롤 방향 ("up" 또는 "down")
+        """
         short_scroll = int(self.adb.screen_height * 0.3)
 
         # 먼저 현재 위치에서 찾기 (하이브리드)
@@ -3256,14 +3266,20 @@ class NaverSearchAutomation:
             log(f"[7단계] 링크 발견 ({source})")
             return self._click_domain_link(visible, domain)
 
-        # 못 찾으면 추가 스크롤 (50%만 먼저 스크롤했으므로 충분히 스크롤)
-        log("[7단계] 현재 위치에서 못 찾음, 스크롤하면서 찾기...")
+        # 못 찾으면 추가 스크롤 (방향에 따라 up/down)
+        direction_text = "위로" if search_direction == "up" else "아래로"
+        log(f"[7단계] 현재 위치에서 못 찾음, {direction_text} 스크롤하면서 찾기...")
+
         for scroll_idx in range(30):
-            self.adb.scroll_down(short_scroll)
+            # 방향에 따라 스크롤
+            if search_direction == "up":
+                self.adb.scroll_up(short_scroll)
+            else:
+                self.adb.scroll_down(short_scroll)
             time.sleep(0.3)
 
             if (scroll_idx + 1) % 5 == 0:
-                log(f"[7단계] 추가 스크롤 {scroll_idx + 1}/30...")
+                log(f"[7단계] 추가 스크롤 ({direction_text}) {scroll_idx + 1}/30...")
 
             links = self._find_all_links_by_domain_hybrid(domain)
             visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]

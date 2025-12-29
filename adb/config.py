@@ -371,6 +371,37 @@ CDP_CONFIG = {
 }
 
 # ============================================
+# 브라우저별 스크롤 보정 설정
+# ============================================
+BROWSER_SCROLL_CONFIG = {
+    # 삼성: 지나치는 경향 → 보정값 줄임, 위로 찾기
+    "samsung": {
+        "scroll_factor": 0.9,      # 스크롤 90% (지나치니까)
+        "search_direction": "up",   # 위로 스크롤하면서 찾기
+    },
+    # 크롬: 부족한 경향 → 보정값 늘림, 아래로 찾기
+    "chrome": {
+        "scroll_factor": 1.1,      # 스크롤 110% (부족하니까)
+        "search_direction": "down", # 아래로 스크롤하면서 찾기
+    },
+    # 오페라: 크롬과 비슷
+    "opera": {
+        "scroll_factor": 1.1,
+        "search_direction": "down",
+    },
+    # 엣지: 크롬과 비슷하게 설정
+    "edge": {
+        "scroll_factor": 1.1,
+        "search_direction": "down",
+    },
+    # 파이어폭스: 기본값
+    "firefox": {
+        "scroll_factor": 1.0,
+        "search_direction": "down",
+    },
+}
+
+# ============================================
 # 디버그 설정
 # ============================================
 DEBUG_CONFIG = {
