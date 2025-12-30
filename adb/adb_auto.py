@@ -2254,18 +2254,29 @@ class ADBController:
         domain_y = domain_elem["center_y"]
 
         # 2. 제목/설명 찾기 (content-desc 속성, clickable="true")
-        # XML 속성 순서가 다를 수 있으므로 별도로 체크
-        content_pattern = r'<node([^>]+)content-desc="([^"]+)"([^>]+)bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+        # 테스트 버전과 동일한 패턴 (속성 순서 다양하게 처리)
+        clickable_pattern = r'<node[^>]+content-desc="([^"]+)"[^>]+clickable="true"[^>]+bounds="(\[[^\]]+\]\[[^\]]+\])"[^>]*/?>|<node[^>]+bounds="(\[[^\]]+\]\[[^\]]+\])"[^>]+content-desc="([^"]+)"[^>]+clickable="true"[^>]*/?>'
 
-        for match in re.finditer(content_pattern, xml):
-            before_attr, content_desc, after_attr, x1, y1, x2, y2 = match.groups()
-            full_attrs = before_attr + after_attr
+        def parse_bounds(bounds_str):
+            match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds_str)
+            if match:
+                return tuple(map(int, match.groups()))
+            return None
 
-            # clickable="true" 체크 (속성 순서 무관)
-            if 'clickable="true"' not in full_attrs:
+        for match in re.finditer(clickable_pattern, xml):
+            groups = match.groups()
+            # 두 패턴 중 하나에 매칭
+            if groups[0] and groups[1]:
+                content_desc, bounds_str = groups[0], groups[1]
+            elif groups[2] and groups[3]:
+                bounds_str, content_desc = groups[2], groups[3]
+            else:
                 continue
 
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            bounds = parse_bounds(bounds_str)
+            if not bounds:
+                continue
+            x1, y1, x2, y2 = bounds
 
             # 빈 텍스트 제외
             if not content_desc.strip():
