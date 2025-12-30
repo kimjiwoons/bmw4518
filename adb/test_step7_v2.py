@@ -43,8 +43,11 @@ CLICK_CONFIG = {
     # 설명 최소 길이 (이 이상이면 설명으로 판단)
     "desc_min_length": 50,
 
-    # 서브링크 키워드 (이 텍스트가 있으면 서브링크로 판단하여 제외)
-    "sublink_keywords": ["강습요금", "대표자", "소개", "안내", "후기", "코치진", "스노보드"],
+    # 서브링크 키워드 (이 텍스트가 있고 짧은 텍스트면 서브링크로 판단)
+    "sublink_keywords": ["강습요금", "대표자", "소개", "안내", "후기", "코치진"],
+
+    # 서브링크 최대 길이 (이 길이 이하일 때만 서브링크 키워드 체크)
+    "sublink_max_length": 25,
 
     # 도메인과 제목/설명 사이 최대 거리 (px)
     "max_distance_from_domain": 300,
@@ -180,12 +183,13 @@ def find_clickable_areas(adb, domain, company_keyword=None):
         if distance > CLICK_CONFIG["max_distance_from_domain"]:
             continue
 
-        # 서브링크 제외
+        # 서브링크 제외 (짧은 텍스트만 체크 - 제목/설명은 길어서 제외됨)
         is_sublink = False
-        for keyword in CLICK_CONFIG["sublink_keywords"]:
-            if keyword in content_desc:
-                is_sublink = True
-                break
+        if len(content_desc) <= CLICK_CONFIG["sublink_max_length"]:
+            for keyword in CLICK_CONFIG["sublink_keywords"]:
+                if keyword in content_desc:
+                    is_sublink = True
+                    break
         if is_sublink:
             log(f"[SKIP] 서브링크: {content_desc[:40]}...")
             continue
