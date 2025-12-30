@@ -63,33 +63,49 @@ def test_find_domain(adb, domain):
     return visible
 
 def test_random_selection(visible_links, repeat=10):
-    """랜덤 선택 테스트 (클릭 없이)"""
+    """랜덤 선택 테스트 (클릭 없이) - 타입별 균등 확률"""
     log("\n" + "=" * 60)
-    log(f"[테스트] 랜덤 선택 {repeat}회 시뮬레이션")
+    log(f"[테스트] 타입별 균등 랜덤 선택 {repeat}회 시뮬레이션")
     log("=" * 60)
 
     if not visible_links:
         log("[에러] 선택할 링크 없음")
         return
 
-    # 선택 카운트
-    selection_count = {}
+    # 타입별 그룹화 (메인 코드와 동일)
+    links_by_type = {'domain': [], 'title': [], 'desc': []}
     for l in visible_links:
         t = l.get('link_type', 'unknown')
-        selection_count[t] = 0
+        if t in links_by_type:
+            links_by_type[t].append(l)
 
-    # 랜덤 선택 시뮬레이션
+    # 존재하는 타입만 필터
+    available_types = [t for t, items in links_by_type.items() if items]
+    log(f"\n[타입별 개수]")
+    for t in available_types:
+        log(f"  {t}: {len(links_by_type[t])}개")
+    log(f"\n[선택 가능 타입] {available_types} (각 {100/len(available_types):.1f}% 확률)")
+
+    # 선택 카운트
+    type_count = {t: 0 for t in available_types}
     selections = []
+
+    # 랜덤 선택 시뮬레이션 (타입 먼저 균등 선택, 그 안에서 요소 선택)
     for i in range(repeat):
-        selected = random.choice(visible_links)
-        link_type = selected.get('link_type', 'unknown')
-        selection_count[link_type] = selection_count.get(link_type, 0) + 1
-        selections.append(link_type)
+        # 1. 타입 먼저 선택 (균등 확률)
+        selected_type = random.choice(available_types)
+        # 2. 해당 타입 내에서 요소 선택
+        selected = random.choice(links_by_type[selected_type])
+
+        type_count[selected_type] += 1
+        selections.append(selected_type)
 
     log(f"\n[선택 결과] {repeat}회:")
-    for link_type, count in selection_count.items():
+    for link_type in available_types:
+        count = type_count[link_type]
         pct = count / repeat * 100
-        log(f"  {link_type:8}: {count}회 ({pct:.1f}%)")
+        expected = 100 / len(available_types)
+        log(f"  {link_type:8}: {count}회 ({pct:.1f}%) [기대: {expected:.1f}%]")
 
     log(f"\n[선택 순서] {' → '.join(selections)}")
 
