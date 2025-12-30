@@ -53,6 +53,9 @@
 | 33 | UI 요소 캐시 구현 | adb/config.py, adb/adb_auto.py | ElementCache 클래스 구현 (TTL 30분), find_element_by_resource_id에 캐시 적용. 삼성 제외 (좌표 기반) | 성공 |
 | 34 | 페이지 전환 확인 캐시 비활성화 | adb/adb_auto.py | nx_query 찾을 때 use_cache=False 추가. 페이지 전환/로드 확인은 실제 화면 상태 필요 | 성공 |
 | 35 | 기기별 파일 기반 캐시 | adb/config.py, adb/adb_auto.py | 브라우저 첫 실행 버튼 위치를 기기별 JSON 파일로 캐시. 파일 삭제하면 다시 덤프. cache/ 디렉토리에 element_cache_{device}.json 생성 | 성공 |
+| 36 | step7 overshoot 설정 추가 | adb/config.py, adb/adb_auto.py | 삼성 브라우저용 more_overshoot 설정 추가. 스크롤 후 추가 N번 더 스크롤하여 지나치게 한 뒤 위로 찾기 | 성공 |
+| 37 | step5/step7 스크롤 설정 분리 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG를 step5(more_*)와 step7(domain_*)로 분리. more_scroll_factor, more_overshoot, more_search_direction / domain_scroll_factor, domain_overshoot, domain_search_direction | 성공 |
+| 38 | step5 삼성 브라우저 버그 수정 | adb/adb_auto.py | more_search_direction 설정이 무시되던 버그 수정. 이제 설정에 따라 up/down 방향으로 스크롤하면서 찾기 | 성공 |
 
 ---
 
