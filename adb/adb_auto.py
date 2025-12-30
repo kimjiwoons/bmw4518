@@ -3668,6 +3668,7 @@ class NaverSearchAutomation:
             browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {"scroll_factor": 1.0, "search_direction": "down"})
             scroll_factor = browser_config.get("scroll_factor", 1.0)
             search_direction = browser_config.get("search_direction", "down")
+            more_overshoot = browser_config.get("more_overshoot", 0)  # 더보기 후 추가 스크롤
 
             # 보정값 적용한 스크롤 횟수
             adjusted_scroll = int(cdp_scroll * scroll_factor)
@@ -3689,6 +3690,13 @@ class NaverSearchAutomation:
 
                 if (i + 1) % 10 == 0:
                     log(f"[7단계] 스크롤 {i + 1}/{adjusted_scroll}...")
+
+            # 더보기 후 추가 스크롤 (위로 찾기 위해 일부러 지나치게)
+            if more_overshoot > 0:
+                log(f"[CDP] 추가 스크롤: {more_overshoot}번 (더보기 overshoot)")
+                for i in range(more_overshoot):
+                    self.adb.scroll_down(compensated=True)
+                    time.sleep(random.uniform(0.1, 0.2))
 
             log(f"[CDP] 스크롤 완료, {search_direction} 방향으로 찾기...")
 
