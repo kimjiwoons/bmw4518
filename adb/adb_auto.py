@@ -1882,17 +1882,6 @@ class ADBController:
             if not xml:
                 continue
 
-            # 크롬: 번역 팝업 먼저 닫기 (화면 중앙 탭)
-            if browser == "chrome" and ("Translate" in xml or "번역" in xml):
-                log("[ADB] 번역 팝업 감지, 화면 중앙 탭으로 닫기...")
-                dismiss_x = self.screen_width // 2
-                dismiss_y = int(self.screen_height * 0.5)
-                self.tap(dismiss_x, dismiss_y)
-                time.sleep(0.5)
-                xml = self.get_screen_xml(force=True)  # 다시 읽기
-                if not xml:
-                    continue
-
             # 네이버 페이지가 로드되면 설정 완료
             if "naver" in xml.lower() or "검색" in xml:
                 log("[ADB] 브라우저 설정 완료, 네이버 페이지 로드됨")
@@ -1924,17 +1913,6 @@ class ADBController:
                 log(f"[ADB] 첫 실행 버튼 없음, 대기 중... ({attempt + 1}/{max_attempts})")
 
         log("[ADB] 첫 실행 설정 처리 완료 (또는 타임아웃)")
-
-        # 크롬 번역 팝업 닫기 (화면 하단 탭)
-        if browser == "chrome":
-            time.sleep(0.5)
-            # 번역 팝업이 상단에 나오므로 화면 중앙 하단 탭해서 닫기
-            dismiss_y = int(self.screen_height * 0.7)
-            dismiss_x = self.screen_width // 2
-            log(f"[ADB] 번역 팝업 닫기 시도 (탭: {dismiss_x}, {dismiss_y})")
-            self.tap(dismiss_x, dismiss_y)
-            time.sleep(0.3)
-
         return True
 
     def open_url(self, url, browser="chrome", handle_first_run=True, max_retry=3):
