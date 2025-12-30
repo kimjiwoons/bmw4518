@@ -59,15 +59,15 @@
 | 39 | ElementCache 초기화 순서 버그 수정 | adb/adb_auto.py | _element_cache가 log 함수 정의 전에 생성되어 NameError 발생하던 버그 수정. 전역 인스턴스를 log 함수 뒤로 이동 | 성공 |
 | 40 | step7 삼성 브라우저 보정값 적용 | adb/adb_auto.py | _step7_samsung_template_matching()에서 domain_scroll_factor, domain_overshoot, domain_search_direction 설정값 적용 (기존: 50% 고정, 방향 하드코딩) | 성공 |
 | 41 | resource-id 캐시 파일 저장 | adb/adb_auto.py | resource-id 캐시를 메모리→파일 저장으로 변경. TTL 유지, 로드 시 만료 항목 자동 정리. 키 형식: resid|{id}|{size} | 성공 |
-| 42 | handle_browser_first_run set_device 추가 | adb/adb_auto.py | 함수 시작 시 _element_cache.set_device() 호출 추가. connect() 이전 호출 시에도 캐시 정상 작동 | 성공 |
+| 42 | 브라우저 첫 화면 버튼 캐시 롤백 | adb/adb_auto.py | 화면 로딩 느릴 때 캐시된 좌표로 잘못 클릭하는 문제 방지. 항상 XML 덤프하여 실제 화면에서 버튼 찾기 | 롤백 |
 
 ---
 
 ## 발생한 이슈 및 해결
 | 이슈 | 원인 | 해결 방법 |
 |------|------|-----------|
+| 브라우저 첫 화면 캐시 클릭 오류 | 화면 로딩 느릴 때 캐시 좌표로 잘못 클릭 | 캐시 기능 롤백, 항상 XML 덤프 |
 | step7 삼성 브라우저 보정값 미적용 | _step7_samsung_template_matching()에서 설정값 무시 | 함수 내에서 BROWSER_SCROLL_CONFIG 읽어서 적용 |
-| 캐시 파일 저장 안 됨 | set_device() 미호출로 _current_device_id가 None | handle_browser_first_run()에 set_device() 추가 |
 | cache 폴더 미생성 | ElementCache가 log 함수 정의 전에 생성되어 NameError | 전역 인스턴스 생성을 log 함수 정의 후로 이동 |
 | 페이지 전환됐는데 실패 판정 | 캐시된 nx_query 값으로 "여전히 존재" 판단 | 페이지 전환/로드 확인 시 use_cache=False |
 | CDP 좌표 불일치 | 삼성 브라우저 CDP 좌표가 실제 화면과 다름 | 템플릿 매칭으로 실제 화면 좌표 찾기 |
