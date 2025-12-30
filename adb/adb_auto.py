@@ -38,7 +38,7 @@ from config import (
     PHONES, ADB_CONFIG, NAVER_CONFIG,
     SCROLL_CONFIG, TOUCH_CONFIG, TYPING_CONFIG, WAIT_CONFIG,
     COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT,
-    CDP_CONFIG, DEBUG_CONFIG, BROWSER_SCROLL_CONFIG
+    CDP_CONFIG, DEBUG_CONFIG, BROWSER_SCROLL_CONFIG, DOMAIN_KEYWORDS
 )
 
 
@@ -2212,8 +2212,9 @@ class ADBController:
             return []
 
         base_domain = domain.split('/')[0]
-        # 도메인에서 제목 키워드 추출 (sidecut.co.kr → sidecut)
-        domain_keyword = base_domain.split('.')[0].lower()
+        # config.py에서 도메인별 키워드 가져오기 (없으면 도메인명에서 추출)
+        title_keywords = DOMAIN_KEYWORDS.get(base_domain, [base_domain.split('.')[0].lower()])
+        log(f"[ADB] 제목 키워드: {title_keywords}")
 
         areas = []
 
@@ -2291,10 +2292,12 @@ class ADBController:
             # 제목인지 설명인지 판단
             link_type = None
 
-            # 제목: 도메인 아래 100px 이내, 도메인 키워드 포함
+            # 제목: 도메인 아래 100px 이내, 키워드 포함
             if distance <= DOMAIN_CLICK_CONFIG["title_distance"]:
-                if domain_keyword in content_desc.lower():
-                    link_type = "title"
+                for keyword in title_keywords:
+                    if keyword.lower() in content_desc.lower():
+                        link_type = "title"
+                        break
 
             # 설명: 긴 텍스트 (50자 이상)
             if not link_type and len(content_desc) >= DOMAIN_CLICK_CONFIG["desc_min_length"]:
