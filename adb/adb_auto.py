@@ -2223,21 +2223,32 @@ class ADBController:
             list: [{"found": True, "text": ..., "bounds": (x1,y1,x2,y2),
                    "center_x": x, "center_y": y, "link_type": "domain"/"title"/"desc"}, ...]
         """
+        log(f"[STEP7-FIND] ========== 도메인 요소 찾기 시작 ==========")
+        log(f"[STEP7-FIND] 검색 도메인: {domain}")
+
         if xml is None:
+            log(f"[STEP7-FIND] XML 없음, 새로 가져오기...")
             xml = self.get_screen_xml(force=True)
         if not xml:
+            log(f"[STEP7-FIND] [ERROR] XML 가져오기 실패!")
             return []
+
+        log(f"[STEP7-FIND] XML 길이: {len(xml)} bytes")
 
         base_domain = domain.split('/')[0]
         # config.py에서 도메인별 키워드 가져오기 (없으면 도메인명에서 추출)
         title_keywords = DOMAIN_KEYWORDS.get(base_domain, [base_domain.split('.')[0].lower()])
-        log(f"[ADB] 제목 키워드: {title_keywords}")
+        log(f"[STEP7-FIND] 기본 도메인: {base_domain}")
+        log(f"[STEP7-FIND] 제목 키워드: {title_keywords}")
+        log(f"[STEP7-FIND] 설정값: desc_min={DOMAIN_CLICK_CONFIG['desc_min_length']}, sublink_max={DOMAIN_CLICK_CONFIG['sublink_max_length']}, max_dist={DOMAIN_CLICK_CONFIG['max_distance_from_domain']}, title_dist={DOMAIN_CLICK_CONFIG['title_distance']}")
 
         areas = []
 
         # 1. 도메인 요소 찾기 (text 속성에서)
+        log(f"[STEP7-FIND] --- 1단계: 도메인 텍스트 찾기 ---")
         domain_pattern = rf'<node[^>]+text="([^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
         domain_elem = None
+        domain_candidates = 0
 
         for match in re.finditer(domain_pattern, xml):
             text, x1, y1, x2, y2 = match.groups()
@@ -2245,11 +2256,14 @@ class ADBController:
 
             # 도메인 텍스트 체크
             if domain in text.lower() or base_domain in text.lower():
+                domain_candidates += 1
                 # URL 인코딩, 서브페이지 제외
                 if '%2F' in text or '%3A' in text:
+                    log(f"[STEP7-FIND] [SKIP] URL인코딩 포함: {text[:40]}...")
                     continue
                 text_after = text.split(domain)[-1].strip() if domain in text else ""
                 if text_after.startswith(('/', '›', '>')):
+                    log(f"[STEP7-FIND] [SKIP] 서브페이지: {text[:40]}...")
                     continue
 
                 domain_elem = {
@@ -2261,17 +2275,20 @@ class ADBController:
                     "link_type": "domain"
                 }
                 areas.append(domain_elem)
-                log(f"[ADB] ✓ 도메인: {text[:40]} bounds=[{x1},{y1}][{x2},{y2}]")
+                log(f"[STEP7-FIND] ✓ [domain] {text[:40]}... bounds=[{x1},{y1}][{x2},{y2}] center_y={domain_elem['center_y']}")
                 break
 
+        log(f"[STEP7-FIND] 도메인 후보: {domain_candidates}개, 선택: {'있음' if domain_elem else '없음'}")
+
         if not domain_elem:
-            log(f"[ADB] 도메인 '{domain}' 못 찾음")
+            log(f"[STEP7-FIND] [FAIL] 도메인 '{domain}' 못 찾음!")
             return []
 
         domain_y = domain_elem["center_y"]
+        log(f"[STEP7-FIND] 도메인 Y좌표: {domain_y} (이 아래 요소만 검색)")
 
         # 2. 제목/설명 찾기 (content-desc 속성, clickable="true")
-        # 테스트 버전과 동일한 패턴 (속성 순서 다양하게 처리)
+        log(f"[STEP7-FIND] --- 2단계: 제목/설명 찾기 (content-desc) ---")
         clickable_pattern = r'<node[^>]+content-desc="([^"]+)"[^>]+clickable="true"[^>]+bounds="(\[[^\]]+\]\[[^\]]+\])"[^>]*/?>|<node[^>]+bounds="(\[[^\]]+\]\[[^\]]+\])"[^>]+content-desc="([^"]+)"[^>]+clickable="true"[^>]*/?>'
 
         def parse_bounds(bounds_str):
@@ -2279,6 +2296,9 @@ class ADBController:
             if match:
                 return tuple(map(int, match.groups()))
             return None
+
+        content_desc_count = 0
+        skipped_reasons = {'empty': 0, 'url_encoded': 0, 'above_domain': 0, 'too_far': 0, 'sublink': 0, 'no_type': 0}
 
         for match in re.finditer(clickable_pattern, xml):
             groups = match.groups()
@@ -2290,6 +2310,7 @@ class ADBController:
             else:
                 continue
 
+            content_desc_count += 1
             bounds = parse_bounds(bounds_str)
             if not bounds:
                 continue
@@ -2297,20 +2318,24 @@ class ADBController:
 
             # 빈 텍스트 제외
             if not content_desc.strip():
+                skipped_reasons['empty'] += 1
                 continue
 
             # URL 인코딩 제외
             if '%2F' in content_desc or '%3A' in content_desc:
+                skipped_reasons['url_encoded'] += 1
                 continue
 
             # 도메인 아래에 있는 요소만
             elem_y = (y1 + y2) // 2
             if elem_y < domain_y:
+                skipped_reasons['above_domain'] += 1
                 continue
 
             # 도메인과 너무 멀면 제외
             distance = elem_y - domain_y
             if distance > DOMAIN_CLICK_CONFIG["max_distance_from_domain"]:
+                skipped_reasons['too_far'] += 1
                 continue
 
             # 서브링크 제외 (짧은 텍스트만 체크)
@@ -2321,7 +2346,8 @@ class ADBController:
                         is_sublink = True
                         break
             if is_sublink:
-                log(f"[ADB] [SKIP] 서브링크: {content_desc[:30]}...")
+                skipped_reasons['sublink'] += 1
+                log(f"[STEP7-FIND] [SKIP] 서브링크: {content_desc[:30]}...")
                 continue
 
             # 제목인지 설명인지 판단
@@ -2347,14 +2373,23 @@ class ADBController:
                     "center_y": (y1 + y2) // 2,
                     "link_type": link_type
                 })
-                log(f"[ADB] ✓ [{link_type}] {content_desc[:40]}... bounds=[{x1},{y1}][{x2},{y2}]")
+                log(f"[STEP7-FIND] ✓ [{link_type}] {content_desc[:40]}... bounds=[{x1},{y1}][{x2},{y2}] dist={distance}")
+            else:
+                skipped_reasons['no_type'] += 1
 
         # 타입별 개수 로깅
+        log(f"[STEP7-FIND] --- 결과 요약 ---")
+        log(f"[STEP7-FIND] content-desc 총 검사: {content_desc_count}개")
+        log(f"[STEP7-FIND] 스킵 사유: empty={skipped_reasons['empty']}, url_enc={skipped_reasons['url_encoded']}, above={skipped_reasons['above_domain']}, too_far={skipped_reasons['too_far']}, sublink={skipped_reasons['sublink']}, no_type={skipped_reasons['no_type']}")
+
         type_counts = {}
         for a in areas:
             t = a.get("link_type", "unknown")
             type_counts[t] = type_counts.get(t, 0) + 1
-        log(f"[ADB] 총 {len(areas)}개 발견 (도메인:{type_counts.get('domain',0)}, 제목:{type_counts.get('title',0)}, 설명:{type_counts.get('desc',0)})")
+        log(f"[STEP7-FIND] ========== 최종 발견: 총 {len(areas)}개 ==========")
+        log(f"[STEP7-FIND]   domain: {type_counts.get('domain',0)}개")
+        log(f"[STEP7-FIND]   title:  {type_counts.get('title',0)}개")
+        log(f"[STEP7-FIND]   desc:   {type_counts.get('desc',0)}개")
 
         return areas
     
@@ -2548,13 +2583,16 @@ class NaverSearchAutomation:
         Returns:
             list: [{"found": True, "center_x": x, "center_y": y, "href": ...}, ...]
         """
+        log(f"[STEP7-FIND] ========== 하이브리드 도메인 검색 시작 ==========")
+        log(f"[STEP7-FIND] 검색 도메인: {domain}")
+
         # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
-        log(f"[DEBUG] MobileCDP 상태: mobile_cdp={self.mobile_cdp is not None}, connected={self.mobile_cdp.connected if self.mobile_cdp else 'N/A'}")
+        log(f"[STEP7-FIND] MobileCDP 상태: mobile_cdp={self.mobile_cdp is not None}, connected={self.mobile_cdp.connected if self.mobile_cdp else 'N/A'}")
 
         if self.mobile_cdp and self.mobile_cdp.connected:
-            log(f"[DEBUG] MobileCDP로 도메인 검색: {domain}")
+            log(f"[STEP7-FIND] >>> MobileCDP 방식으로 검색 <<<")
             results = self.mobile_cdp.find_all_links_by_domain(domain)
-            log(f"[DEBUG] MobileCDP 결과: {len(results) if results else 0}개")
+            log(f"[STEP7-FIND] MobileCDP 결과: {len(results) if results else 0}개")
 
             if results:
                 # MobileCDP 형식 → ADB 형식 변환
@@ -2563,7 +2601,7 @@ class NaverSearchAutomation:
                     width = r.get("width", 100)
                     height = r.get("height", 50)
                     link_type = r.get("link_type", "unknown")
-                    log(f"[DEBUG] CDP 링크: [{link_type}] {r.get('text', '')[:30]} ({width}x{height})")
+                    log(f"[STEP7-FIND] CDP 링크: [{link_type}] {r.get('text', '')[:30]}... ({width}x{height})")
                     links.append({
                         "found": True,
                         "center_x": r["center_x"],
@@ -2579,17 +2617,18 @@ class NaverSearchAutomation:
                         "link_type": link_type,
                         "source": "mobile_cdp"
                     })
+                log(f"[STEP7-FIND] MobileCDP 검색 완료: {len(links)}개 반환")
                 return links
             else:
-                log("[DEBUG] MobileCDP 결과 없음, uiautomator로 fallback")
+                log("[STEP7-FIND] MobileCDP 결과 없음, uiautomator로 fallback")
 
         # 2순위: uiautomator
-        log("[DEBUG] uiautomator로 도메인 검색")
+        log("[STEP7-FIND] >>> uiautomator 방식으로 검색 <<<")
         xml = self.adb.get_screen_xml(force=True)
         links = self.adb.find_all_elements_with_domain(domain, xml)
         for link in links:
             link["source"] = "uiautomator"
-        log(f"[DEBUG] uiautomator 결과: {len(links)}개")
+        log(f"[STEP7-FIND] uiautomator 검색 완료: {len(links)}개 반환")
         return links
 
     # ========================================
@@ -3477,7 +3516,9 @@ class NaverSearchAutomation:
             domain: 찾을 도메인
             search_direction: 스크롤 방향 ("up" 또는 "down")
         """
+        log(f"[STEP7] _find_and_click_domain_final 시작: {domain}, 방향={search_direction}")
         short_scroll = int(self.adb.screen_height * 0.3)
+        log(f"[STEP7] viewport: {self.viewport_top:.0f} ~ {self.viewport_bottom:.0f}, short_scroll={short_scroll}")
 
         # 먼저 현재 위치에서 찾기 (하이브리드)
         links = self._find_all_links_by_domain_hybrid(domain)
@@ -3485,12 +3526,12 @@ class NaverSearchAutomation:
 
         if visible:
             source = visible[0].get("source", "unknown")
-            log(f"[7단계] 링크 발견 ({source})")
+            log(f"[STEP7] 현재 위치에서 발견! {len(visible)}개 (source: {source})")
             return self._click_domain_link(visible, domain)
 
         # 못 찾으면 추가 스크롤 (방향에 따라 up/down)
         direction_text = "위로" if search_direction == "up" else "아래로"
-        log(f"[7단계] 현재 위치에서 못 찾음, {direction_text} 스크롤하면서 찾기...")
+        log(f"[STEP7] 현재 위치에서 못 찾음, {direction_text} 스크롤하면서 찾기...")
 
         for scroll_idx in range(30):
             # 방향에 따라 스크롤
@@ -3501,60 +3542,102 @@ class NaverSearchAutomation:
             time.sleep(0.3)
 
             if (scroll_idx + 1) % 5 == 0:
-                log(f"[7단계] 추가 스크롤 ({direction_text}) {scroll_idx + 1}/30...")
+                log(f"[STEP7] 추가 스크롤 ({direction_text}) {scroll_idx + 1}/30...")
 
             links = self._find_all_links_by_domain_hybrid(domain)
             visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
 
             if visible:
                 source = visible[0].get("source", "unknown")
-                log(f"[7단계] 링크 발견 ({source})")
+                log(f"[STEP7] 추가 스크롤 중 발견! {len(visible)}개 (source: {source})")
                 return self._click_domain_link(visible, domain)
 
+        log(f"[STEP7] [FAIL] 30번 스크롤에서 도메인 못 찾음")
         return False
     
     def _click_domain_link(self, visible_links, domain):
-        """도메인 링크 클릭 - 테스트 버전과 동일하게 단순화
+        """도메인 링크 클릭 - 타입별 균등 확률 (33%씩)
 
-        찾은 영역에서 바로 랜덤 선택 (스크롤/재검색 없음)
+        1. 타입별로 그룹화 (domain/title/desc)
+        2. 타입 먼저 랜덤 선택 (균등 확률)
+        3. 해당 타입 내에서 요소 랜덤 선택
         """
-        # 링크 타입별 개수 로깅
-        types = {}
+        log(f"[STEP7-CLICK] ========== 도메인 링크 클릭 시작 ==========")
+        log(f"[STEP7-CLICK] 도메인: {domain}")
+        log(f"[STEP7-CLICK] 전체 링크 수: {len(visible_links)}개")
+
+        # 1. 타입별로 그룹화
+        links_by_type = {'domain': [], 'title': [], 'desc': []}
         for l in visible_links:
             t = l.get('link_type', 'unknown')
-            types[t] = types.get(t, 0) + 1
-        log(f"[발견] {domain} 링크 {len(visible_links)}개! (도메인:{types.get('domain',0)}, 제목:{types.get('title',0)}, 설명:{types.get('desc',0)})")
+            if t in links_by_type:
+                links_by_type[t].append(l)
+            else:
+                log(f"[STEP7-CLICK] [WARN] 알 수 없는 타입: {t}")
 
-        # 바로 랜덤 선택 (테스트 버전과 동일)
+        # 2. 타입별 개수 로깅
+        log(f"[STEP7-CLICK] 타입별 개수:")
+        for t, items in links_by_type.items():
+            log(f"[STEP7-CLICK]   - {t}: {len(items)}개")
+            for i, item in enumerate(items):
+                log(f"[STEP7-CLICK]     [{i+1}] {item['text'][:50]}... bounds={item.get('bounds')}")
+
+        # 3. 존재하는 타입만 필터
+        available_types = [t for t, items in links_by_type.items() if items]
+        log(f"[STEP7-CLICK] 선택 가능 타입: {available_types} (각 {100/len(available_types):.1f}% 확률)")
+
+        if not available_types:
+            log(f"[STEP7-CLICK] [ERROR] 선택 가능한 타입 없음!")
+            return False
+
+        # 클릭 시도 (최대 3회)
         for click_try in range(3):
-            selected = random.choice(visible_links)
-            link_type = selected.get('link_type', 'unknown')
-            bounds = selected.get('bounds', (0,0,0,0))
+            log(f"[STEP7-CLICK] ---- 클릭 시도 {click_try + 1}/3 ----")
 
-            # 영역 내 랜덤 좌표 계산 (15% 마진)
+            # 4. 타입 먼저 랜덤 선택 (균등 확률)
+            selected_type = random.choice(available_types)
+            log(f"[STEP7-CLICK] 선택된 타입: {selected_type} (from {available_types})")
+
+            # 5. 해당 타입 내에서 요소 랜덤 선택
+            type_links = links_by_type[selected_type]
+            selected = random.choice(type_links)
+            log(f"[STEP7-CLICK] 선택된 요소: {selected['text'][:50]}...")
+
+            bounds = selected.get('bounds', (0,0,0,0))
             x1, y1, x2, y2 = bounds
+            log(f"[STEP7-CLICK] 요소 bounds: [{x1},{y1}][{x2},{y2}] (크기: {x2-x1}x{y2-y1})")
+
+            # 6. 영역 내 랜덤 좌표 계산 (15% 마진)
             margin_x = max(5, int((x2 - x1) * 0.15))
             margin_y = max(3, int((y2 - y1) * 0.15))
             click_x = random.randint(x1 + margin_x, max(x1 + margin_x, x2 - margin_x))
             click_y = random.randint(y1 + margin_y, max(y1 + margin_y, y2 - margin_y))
+            log(f"[STEP7-CLICK] 마진: x={margin_x}, y={margin_y}")
+            log(f"[STEP7-CLICK] 클릭 좌표: ({click_x}, {click_y})")
 
-            log(f"[클릭 {click_try + 1}/3] [{link_type}] {selected['text'][:40]}... → ({click_x}, {click_y})")
+            # 7. 클릭 실행
+            log(f"[STEP7-CLICK] >>> TAP 실행: ({click_x}, {click_y})")
             self.adb.tap(click_x, click_y, randomize=False)
             time.sleep(2)
 
+            # 8. 페이지 전환 확인
+            log(f"[STEP7-CLICK] 페이지 전환 확인 중...")
             xml = self.adb.get_screen_xml(force=True)
             nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
             if not nx.get("found"):
-                log("[성공] 페이지 이동!")
+                log(f"[STEP7-CLICK] [SUCCESS] 페이지 이동 성공!")
+                log(f"[STEP7-CLICK] 최종 선택: [{selected_type}] {selected['text'][:40]}...")
                 return True
 
-            log("[재시도] 페이지 변경 안 됨")
+            log(f"[STEP7-CLICK] [RETRY] 페이지 변경 안 됨, nx_query 여전히 존재")
 
+        log(f"[STEP7-CLICK] [FAIL] 3회 시도 모두 실패")
         return False
     
     def _find_and_click_domain_in_page(self, domain):
         """현재 페이지에서 도메인 찾아서 클릭 (하이브리드: MobileCDP 우선)"""
+        log(f"[STEP7] _find_and_click_domain_in_page 시작: {domain}")
         max_scrolls = 30
         short_scroll = int(self.adb.screen_height * 0.3)
 
@@ -3567,10 +3650,11 @@ class NaverSearchAutomation:
 
                 if visible:
                     source = visible[0].get("source", "unknown")
-                    log(f"[발견] {domain} 링크 {len(visible)}개! ({source})")
+                    log(f"[STEP7] 도메인 발견! {len(visible)}개 (source: {source})")
 
                     # 추가 랜덤 스크롤 (CDP 동일)
                     extra = random.randint(30, 80) * random.choice([1, -1])
+                    log(f"[STEP7] 추가 랜덤 스크롤: {extra}px")
                     self.adb.scroll_down(extra)
                     time.sleep(0.3)
 
@@ -3579,28 +3663,18 @@ class NaverSearchAutomation:
                     visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
 
                     if visible:
-                        for click_try in range(3):
-                            selected = random.choice(visible)
-                            log(f"[클릭 {click_try + 1}/3] {selected['text'][:50]}...")
-                            self.adb.tap_element(selected)
-                            time.sleep(2)
-
-                            xml = self.adb.get_screen_xml(force=True)
-                            nx = self.adb.find_element_by_resource_id("nx_query", xml)
-
-                            if not nx.get("found"):
-                                log("[성공] 페이지 이동!")
-                                return True
-
-                            log("[재시도] 페이지 변경 안 됨")
-
-                        return False
+                        log(f"[STEP7] 스크롤 후 {len(visible)}개 visible, _click_domain_link 호출")
+                        # 타입별 균등 선택 사용
+                        return self._click_domain_link(visible, domain)
+                    else:
+                        log(f"[STEP7] [WARN] 스크롤 후 visible 없음, 계속 탐색")
 
             self.adb.scroll_down(short_scroll)
 
             if scroll_count % 10 == 0:
-                log(f"[7단계] 스크롤 {scroll_count}/{max_scrolls}...")
+                log(f"[STEP7] 스크롤 진행중: {scroll_count}/{max_scrolls}...")
 
+        log(f"[STEP7] [FAIL] {max_scrolls}번 스크롤에서 도메인 못 찾음")
         return False
 
     def _click_page_number(self, page_num):
