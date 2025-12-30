@@ -4,7 +4,7 @@
 - 프로젝트명: GeeLark ADB 네이버 검색 자동화
 - 시작일: 2025-12-29
 - 마지막 업데이트: 2025-12-30
-- 현재 세션: #4
+- 현재 세션: #5
 
 ---
 
@@ -34,6 +34,10 @@
 | 14 | 브라우저별 스크롤 보정값 설정 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG 추가 (scroll_factor, search_direction) | 성공 |
 | 15 | 크롬 번역 팝업 처리 제거 | adb/adb_auto.py | 번역 팝업 감지/닫기 로직이 엉뚱한 곳 클릭 → 제거 (나중에 해결) | 성공 |
 | 16 | 도메인/제목/설명 랜덤 클릭 | adb/adb_auto.py | MobileCDP find_all_links_by_domain에 서브링크 필터링+광고 제외+링크타입 분류 추가, 도메인/제목/설명 중 랜덤 선택 후 영역 내 랜덤 좌표 클릭 | 성공 |
+| 17 | test_step7_v2.py 작성 | adb/test_step7_v2.py | CDP 없이 uiautomator XML 파싱으로 도메인/제목/설명 찾기 테스트 스크립트 | 성공 |
+| 18 | 서브링크 길이 조건 추가 | adb/test_step7_v2.py | sublink_max_length=10 이하일 때만 서브링크 키워드 체크 (제목/설명 오탐 방지) | 성공 |
+| 19 | 도메인 아래 요소만 포함 | adb/test_step7_v2.py | elem_y < domain_y 조건으로 위쪽 검색결과 이미지 제외 | 성공 |
+| 20 | 메인코드에 로직 통합 | adb/adb_auto.py | DOMAIN_CLICK_CONFIG 추가, find_all_elements_with_domain() 완전 재작성하여 제목/설명 찾기 로직 통합 | 성공 |
 
 ---
 
@@ -53,6 +57,9 @@
 | 브라우저별 스크롤 차이 | 삼성:지나침, 크롬:부족 | BROWSER_SCROLL_CONFIG로 보정값/찾기방향 설정 |
 | 크롬 번역 팝업 엉뚱한 클릭 | 팝업 감지 로직이 잘못된 곳 터치 | 일단 제거, 나중에 해결책 찾기 |
 | 도메인 영역만 클릭 | uiautomator는 도메인 텍스트만 찾음 | MobileCDP로 도메인/제목/설명 링크 모두 찾기 + 서브링크 필터링 |
+| 제목/설명이 서브링크로 SKIP | 서브링크 키워드("스노보드")가 제목에도 포함됨 | sublink_max_length=10 조건 추가, 짧은 텍스트만 서브링크 체크 |
+| 다른 검색결과 이미지 클릭 | 도메인 위에 있는 요소도 포함됨 | elem_y < domain_y 조건으로 도메인 아래 요소만 포함 |
+| MobileCDP 탐지 위험 | CDP 활성화 시 서버에서 감지 가능 | uiautomator XML 파싱 방식으로 전환 (CDP 없이 동작) |
 
 ---
 
@@ -64,6 +71,7 @@
 
 ## 다음 단계 (TODO)
 - [x] step7: 도메인 찾기 (삼성 브라우저용 템플릿 매칭 방식 구현) ✓
+- [x] step7: 도메인/제목/설명 랜덤 클릭 (uiautomator XML 파싱 방식) ✓
 - [ ] step4_5: 통합에서 도메인 찾기 (삼성 브라우저용)
 - [ ] 도메인 텍스트 → 이미지 생성 → 템플릿 매칭 방식 검토
 - [ ] 템플릿 파일 생성: template_search.png (검색창), template_domain.png, template_sublink.png
@@ -98,14 +106,25 @@
 "firefox": {"scroll_factor": 1.0, "search_direction": "down"},
 ```
 
-### 도메인 링크 랜덤 클릭 로직
-MobileCDP `find_all_links_by_domain` 동작:
-1. `a[href*="도메인"]`으로 모든 링크 찾기
-2. 서브링크 제외 (`data-heatmap-target='.sublink'`)
-3. 서브페이지 제외 (href가 도메인+경로로 끝나면 제외)
-4. 광고 영역 제외 (tit_area, ad_area, powerlink)
-5. 링크 타입 분류: domain/title/desc
-6. 여러 링크 중 랜덤 선택 → 해당 영역 내 랜덤 좌표 클릭
+### 도메인 링크 랜덤 클릭 로직 (CDP 없이 uiautomator)
+`find_all_elements_with_domain` 동작 (adb_auto.py):
+1. XML에서 도메인 텍스트 찾기 (text 속성)
+2. 도메인 아래 content-desc 속성에서 제목/설명 찾기
+3. 서브링크 제외: 10자 이하 + 키워드 포함 시 SKIP
+4. 제목 판단: 도메인 아래 100px 이내 + 도메인 키워드 포함
+5. 설명 판단: 50자 이상
+6. 여러 영역 중 랜덤 선택 → 해당 영역 내 랜덤 좌표 클릭 (15% 마진)
+
+### DOMAIN_CLICK_CONFIG 설정
+```python
+DOMAIN_CLICK_CONFIG = {
+    "desc_min_length": 50,           # 설명 최소 길이
+    "sublink_keywords": ["강습요금", "대표자", "소개", ...],  # 서브링크 키워드
+    "sublink_max_length": 10,        # 서브링크 최대 길이
+    "max_distance_from_domain": 300, # 도메인과 최대 거리
+    "title_distance": 100,           # 제목 판단 거리
+}
+```
 
 ### ADB 명령어
 ```bash
