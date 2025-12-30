@@ -50,7 +50,7 @@
 | 30 | _find_and_click_domain_in_page 통합 | adb/adb_auto.py | CDP 없을 때도 _click_domain_link() 사용하여 타입별 균등 선택 적용 | 성공 |
 | 31 | 테스트 스크립트 타입별 균등 적용 | adb/test_step7_main.py | test_random_selection()도 메인 코드와 동일한 타입별 균등 랜덤 선택 적용, 기대 확률 표시 추가 | 성공 |
 | 32 | 삼성만 좌표 기반 검색창 클릭 | adb/adb_auto.py | coordinate_only_browsers에서 firefox, opera, edge 제거. 삼성만 XML에서 웹 요소 안 보여서 좌표 모드 | 성공 |
-| 33 | UI 요소 캐시 구현 | adb/config.py, adb/adb_auto.py | ElementCache 클래스 구현 (TTL 30분), find_element_by_resource_id에 캐시 적용. MM_SEARCH_FAKE, query, nx_query 캐시 | 성공 |
+| 33 | UI 요소 캐시 구현 | adb/config.py, adb/adb_auto.py | ElementCache 클래스 구현 (TTL 30분), find_element_by_resource_id에 캐시 적용. 삼성 제외 (좌표 기반) | 성공 |
 
 ---
 
@@ -178,11 +178,13 @@ DOMAIN_KEYWORDS = {
 ```
 
 ### UI 요소 캐시 설정 (ELEMENT_CACHE_CONFIG)
-고정 UI 요소 위치 캐시로 속도 개선
+고정 UI 요소 위치 캐시로 속도 개선 (삼성 제외)
 ```python
 ELEMENT_CACHE_CONFIG = {
     "ttl_seconds": 1800,  # 30분
     "enabled": True,
+    # 크롬, 파이어폭스, 오페라, 엣지에서 사용
+    # 삼성은 좌표 기반이라 해당 없음
     "cacheable_elements": [
         "MM_SEARCH_FAKE",  # 네이버 메인 검색창
         "query",           # 검색 모드 입력창
@@ -190,6 +192,8 @@ ELEMENT_CACHE_CONFIG = {
     ],
 }
 ```
+- 적용 브라우저: 크롬, 파이어폭스, 오페라, 엣지
+- 삼성 브라우저: 좌표 기반이라 XML 덤프 안 함 → 캐시 해당 없음
 - 캐시 히트 시 XML 덤프 생략 → 속도 향상
 - 화면 크기별 캐시 키 분리
 - `[CACHE]` 접두사 로그로 캐시 동작 확인
