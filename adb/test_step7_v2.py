@@ -180,6 +180,10 @@ def find_clickable_areas(adb, domain, company_keyword=None):
         elem_y = (bounds[1] + bounds[3]) // 2
         distance = abs(elem_y - domain_y)
 
+        # 도메인 아래에 있는 요소만 (위에 있는 건 다른 검색결과)
+        if elem_y < domain_y:
+            continue
+
         if distance > CLICK_CONFIG["max_distance_from_domain"]:
             continue
 
