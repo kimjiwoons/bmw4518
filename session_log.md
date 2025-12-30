@@ -51,12 +51,14 @@
 | 31 | 테스트 스크립트 타입별 균등 적용 | adb/test_step7_main.py | test_random_selection()도 메인 코드와 동일한 타입별 균등 랜덤 선택 적용, 기대 확률 표시 추가 | 성공 |
 | 32 | 삼성만 좌표 기반 검색창 클릭 | adb/adb_auto.py | coordinate_only_browsers에서 firefox, opera, edge 제거. 삼성만 XML에서 웹 요소 안 보여서 좌표 모드 | 성공 |
 | 33 | UI 요소 캐시 구현 | adb/config.py, adb/adb_auto.py | ElementCache 클래스 구현 (TTL 30분), find_element_by_resource_id에 캐시 적용. 삼성 제외 (좌표 기반) | 성공 |
+| 34 | 페이지 전환 확인 캐시 비활성화 | adb/adb_auto.py | nx_query 찾을 때 use_cache=False 추가. 페이지 전환/로드 확인은 실제 화면 상태 필요 | 성공 |
 
 ---
 
 ## 발생한 이슈 및 해결
 | 이슈 | 원인 | 해결 방법 |
 |------|------|-----------|
+| 페이지 전환됐는데 실패 판정 | 캐시된 nx_query 값으로 "여전히 존재" 판단 | 페이지 전환/로드 확인 시 use_cache=False |
 | CDP 좌표 불일치 | 삼성 브라우저 CDP 좌표가 실제 화면과 다름 | 템플릿 매칭으로 실제 화면 좌표 찾기 |
 | easyocr 메모리 오류 | GPU 메모리 부족 | OpenCV 템플릿 매칭으로 대체 |
 | pytesseract 한글 인식 불량 | 한글 글자 분리됨 | 템플릿 매칭으로 대체 |
