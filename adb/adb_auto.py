@@ -354,8 +354,8 @@ class ElementCache:
         }
 
 
-# 전역 요소 캐시 인스턴스
-_element_cache = ElementCache()
+# 전역 요소 캐시 인스턴스 - log 함수 정의 후에 생성됨 (아래 참조)
+_element_cache = None
 
 
 # ============================================
@@ -553,6 +553,10 @@ def log(message, level="INFO"):
         import sys
         if sys.exc_info()[0] is not None:
             tb.print_exc()
+
+
+# 전역 요소 캐시 인스턴스 생성 (log 함수 정의 후)
+_element_cache = ElementCache()
 
 
 def random_delay(min_sec, max_sec):
