@@ -176,6 +176,16 @@ def find_domain_and_sublinks(adb, domain, xml=None):
     return domain_bounds, has_sublink
 
 
+def create_adb(adb_address):
+    """ADB 컨트롤러 생성"""
+    phone_config = {
+        "adb_address": adb_address,
+        "screen_width": 720,
+        "screen_height": 1440
+    }
+    return ADBController(phone_config)
+
+
 def test_domain_click(adb_address, domain, browser="chrome", do_click=False):
     """도메인 클릭 테스트"""
     log("=" * 60)
@@ -183,7 +193,7 @@ def test_domain_click(adb_address, domain, browser="chrome", do_click=False):
     log("=" * 60)
 
     # 1. ADB 연결
-    adb = ADBController(adb_address)
+    adb = create_adb(adb_address)
     if not adb.connect():
         log("[FAIL] ADB 연결 실패")
         return False
@@ -246,7 +256,7 @@ def test_multiple_clicks(adb_address, domain, count=10):
     log(f"[TEST] 클릭 분포 테스트: {count}회")
     log("=" * 60)
 
-    adb = ADBController(adb_address)
+    adb = create_adb(adb_address)
     if not adb.connect():
         log("[FAIL] ADB 연결 실패")
         return
