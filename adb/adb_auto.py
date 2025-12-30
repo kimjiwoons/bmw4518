@@ -43,6 +43,27 @@ from config import (
 
 
 # ============================================
+# 도메인/제목/설명 클릭 설정 (7단계용)
+# ============================================
+DOMAIN_CLICK_CONFIG = {
+    # 설명 최소 길이 (이 이상이면 설명으로 판단)
+    "desc_min_length": 50,
+
+    # 서브링크 키워드 (짧은 텍스트에 이 키워드 있으면 서브링크)
+    "sublink_keywords": ["강습요금", "대표자", "소개", "안내", "후기", "코치진", "이용안내", "가격", "위치", "연락처"],
+
+    # 서브링크 최대 길이 (이 길이 이하일 때만 서브링크 키워드 체크)
+    "sublink_max_length": 10,
+
+    # 도메인과 제목/설명 사이 최대 거리 (px)
+    "max_distance_from_domain": 300,
+
+    # 제목 판단: 도메인 아래 이 거리 이내
+    "title_distance": 100,
+}
+
+
+# ============================================
 # CDP 스크롤 정보 캐시 (N회마다 갱신, 파일 저장)
 # ============================================
 class CDPScrollCache:
@@ -2179,76 +2200,125 @@ class ADBController:
         return {"found": False}
     
     def find_all_elements_with_domain(self, domain, xml=None):
-        """도메인이 포함된 모든 요소 찾기 (정확한 경로 매칭)
+        """도메인 + 제목 + 설명 영역 모두 찾기 (uiautomator XML 파싱)
 
-        - sidecut.co.kr 지정 시: sidecut.co.kr만 매칭 (서브페이지 제외)
-        - sidecut.co.kr/lessons 지정 시: 정확히 그 경로만 매칭
+        Returns:
+            list: [{"found": True, "text": ..., "bounds": (x1,y1,x2,y2),
+                   "center_x": x, "center_y": y, "link_type": "domain"/"title"/"desc"}, ...]
         """
         if xml is None:
             xml = self.get_screen_xml(force=True)
         if not xml:
             return []
 
-        # 경로 포함 여부 확인
-        has_path = '/' in domain and not domain.endswith('/')
         base_domain = domain.split('/')[0]
+        # 도메인에서 제목 키워드 추출 (sidecut.co.kr → sidecut)
+        domain_keyword = base_domain.split('.')[0].lower()
 
-        links = []
-        found_count = 0
-        # text 또는 content-desc에서 베이스 도메인 포함된 요소 찾기
-        node_pattern = rf'<node[^>]+(?:text|content-desc)="([^"]*{re.escape(base_domain)}[^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+        areas = []
 
-        for match in re.finditer(node_pattern, xml, re.IGNORECASE):
-            text_found, x1, y1, x2, y2 = match.groups()
+        # 1. 도메인 요소 찾기 (text 속성에서)
+        domain_pattern = rf'<node[^>]+text="([^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+        domain_elem = None
+
+        for match in re.finditer(domain_pattern, xml):
+            text, x1, y1, x2, y2 = match.groups()
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            found_count += 1
 
-            # 유효한 bounds만
-            if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
-                log(f"[ADB] 제외(bounds=0): {text_found[:50]}")
+            # 도메인 텍스트 체크
+            if domain in text.lower() or base_domain in text.lower():
+                # URL 인코딩, 서브페이지 제외
+                if '%2F' in text or '%3A' in text:
+                    continue
+                text_after = text.split(domain)[-1].strip() if domain in text else ""
+                if text_after.startswith(('/', '›', '>')):
+                    continue
+
+                domain_elem = {
+                    "found": True,
+                    "text": text,
+                    "bounds": (x1, y1, x2, y2),
+                    "center_x": (x1 + x2) // 2,
+                    "center_y": (y1 + y2) // 2,
+                    "link_type": "domain"
+                }
+                areas.append(domain_elem)
+                log(f"[ADB] ✓ 도메인: {text[:40]} bounds=[{x1},{y1}][{x2},{y2}]")
+                break
+
+        if not domain_elem:
+            log(f"[ADB] 도메인 '{domain}' 못 찾음")
+            return []
+
+        domain_y = domain_elem["center_y"]
+
+        # 2. 제목/설명 찾기 (content-desc 속성, clickable="true")
+        content_pattern = r'<node[^>]+clickable="true"[^>]+content-desc="([^"]+)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+
+        for match in re.finditer(content_pattern, xml):
+            content_desc, x1, y1, x2, y2 = match.groups()
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+
+            # 빈 텍스트 제외
+            if not content_desc.strip():
                 continue
 
-            # URL 인코딩된 텍스트 제외 (파비콘, 이미지 URL 등)
-            # sunny?src=https%3A%2F%2Fsidecut.co.kr%2Ffavicon 같은 것
-            if '%2F' in text_found or '%3A' in text_found or 'sunny?' in text_found.lower():
-                log(f"[ADB] 제외(URL인코딩): {text_found[:50]}")
+            # URL 인코딩 제외
+            if '%2F' in content_desc or '%3A' in content_desc:
                 continue
 
-            # http로 시작하는 URL 제외
-            if text_found.lower().startswith(('http://', 'https://')):
-                log(f"[ADB] 제외(http): {text_found[:50]}")
+            # 도메인 아래에 있는 요소만
+            elem_y = (y1 + y2) // 2
+            if elem_y < domain_y:
                 continue
 
-            # 정확한 매칭 체크
-            is_match = False
-            if has_path:
-                # 경로가 지정된 경우: 정확한 경로 포함
-                if domain in text_found:
-                    is_match = True
-            else:
-                # 경로가 없는 경우: 메인 도메인만 (서브링크 제외)
-                # "sidecut.co.kr"은 매칭, "sidecut.co.kr › lessons"나 "sidecut.co.kr/lessons"는 제외
-                # 도메인 뒤에 / 또는 › 또는 > 가 있으면 서브페이지
-                text_after_domain = text_found.split(domain)[-1].strip() if domain in text_found else ""
-                if domain in text_found and not text_after_domain.startswith(('/', '›', '>')):
-                    is_match = True
-                else:
-                    log(f"[ADB] 제외(서브페이지): {text_found[:50]} (뒤: '{text_after_domain[:20]}')")
-
-            if not is_match:
+            # 도메인과 너무 멀면 제외
+            distance = elem_y - domain_y
+            if distance > DOMAIN_CLICK_CONFIG["max_distance_from_domain"]:
                 continue
 
-            log(f"[ADB] ✓ 매칭! {text_found[:40]} bounds=[{x1},{y1}][{x2},{y2}]")
-            links.append({
-                "found": True,
-                "text": text_found,
-                "bounds": (x1, y1, x2, y2),
-                "center_x": (x1 + x2) // 2,
-                "center_y": (y1 + y2) // 2
-            })
+            # 서브링크 제외 (짧은 텍스트만 체크)
+            is_sublink = False
+            if len(content_desc) <= DOMAIN_CLICK_CONFIG["sublink_max_length"]:
+                for keyword in DOMAIN_CLICK_CONFIG["sublink_keywords"]:
+                    if keyword in content_desc:
+                        is_sublink = True
+                        break
+            if is_sublink:
+                log(f"[ADB] [SKIP] 서브링크: {content_desc[:30]}...")
+                continue
 
-        log(f"[ADB] 총 {found_count}개 요소 검사, {len(links)}개 매칭")
-        return links
+            # 제목인지 설명인지 판단
+            link_type = None
+
+            # 제목: 도메인 아래 100px 이내, 도메인 키워드 포함
+            if distance <= DOMAIN_CLICK_CONFIG["title_distance"]:
+                if domain_keyword in content_desc.lower():
+                    link_type = "title"
+
+            # 설명: 긴 텍스트 (50자 이상)
+            if not link_type and len(content_desc) >= DOMAIN_CLICK_CONFIG["desc_min_length"]:
+                link_type = "desc"
+
+            if link_type:
+                areas.append({
+                    "found": True,
+                    "text": content_desc,
+                    "bounds": (x1, y1, x2, y2),
+                    "center_x": (x1 + x2) // 2,
+                    "center_y": (y1 + y2) // 2,
+                    "link_type": link_type
+                })
+                log(f"[ADB] ✓ [{link_type}] {content_desc[:40]}... bounds=[{x1},{y1}][{x2},{y2}]")
+
+        # 타입별 개수 로깅
+        type_counts = {}
+        for a in areas:
+            t = a.get("link_type", "unknown")
+            type_counts[t] = type_counts.get(t, 0) + 1
+        log(f"[ADB] 총 {len(areas)}개 발견 (도메인:{type_counts.get('domain',0)}, 제목:{type_counts.get('title',0)}, 설명:{type_counts.get('desc',0)})")
+
+        return areas
     
     def click_search_button(self):
         """검색 버튼 클릭 - 키보드 검색 버튼 우선"""
