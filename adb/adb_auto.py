@@ -2706,7 +2706,8 @@ class NaverSearchAutomation:
         clicks_before_reload = 5
 
         # 요소 기반 안 되는 브라우저는 처음부터 좌표 모드
-        coordinate_only_browsers = ["samsung", "firefox", "opera", "edge"]
+        # 삼성 브라우저만 XML에서 웹 요소가 안 보임
+        coordinate_only_browsers = ["samsung"]
         use_coordinate_fallback = self.browser in coordinate_only_browsers
 
         # 삼성 브라우저: 무한 재시도 (디버깅용)
