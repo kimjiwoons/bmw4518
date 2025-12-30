@@ -3497,7 +3497,10 @@ class NaverSearchAutomation:
         return False
     
     def _click_domain_link(self, visible_links, domain):
-        """도메인 링크 클릭 (하이브리드) - 도메인/제목/설명 중 랜덤 선택"""
+        """도메인 링크 클릭 - 테스트 버전과 동일하게 단순화
+
+        찾은 영역에서 바로 랜덤 선택 (스크롤/재검색 없음)
+        """
         # 링크 타입별 개수 로깅
         types = {}
         for l in visible_links:
@@ -3505,51 +3508,31 @@ class NaverSearchAutomation:
             types[t] = types.get(t, 0) + 1
         log(f"[발견] {domain} 링크 {len(visible_links)}개! (도메인:{types.get('domain',0)}, 제목:{types.get('title',0)}, 설명:{types.get('desc',0)})")
 
-        # 요소 위치에 따라 스크롤 방향 결정 (viewport 밖으로 나가지 않도록)
-        first_link = visible_links[0]
-        center_y = first_link["center_y"]
-        screen_middle = self.adb.screen_height // 2
+        # 바로 랜덤 선택 (테스트 버전과 동일)
+        for click_try in range(3):
+            selected = random.choice(visible_links)
+            link_type = selected.get('link_type', 'unknown')
+            bounds = selected.get('bounds', (0,0,0,0))
 
-        if center_y < screen_middle:
-            # 상단에 있으면 위로 스크롤 (요소를 아래로)
-            extra = -random.randint(30, 80)
-            log(f"[스크롤] 요소 상단({center_y}) → 위로 {abs(extra)}px")
-        else:
-            # 하단에 있으면 아래로 스크롤 (요소를 위로)
-            extra = random.randint(30, 80)
-            log(f"[스크롤] 요소 하단({center_y}) → 아래로 {extra}px")
+            # 영역 내 랜덤 좌표 계산 (15% 마진)
+            x1, y1, x2, y2 = bounds
+            margin_x = max(5, int((x2 - x1) * 0.15))
+            margin_y = max(3, int((y2 - y1) * 0.15))
+            click_x = random.randint(x1 + margin_x, max(x1 + margin_x, x2 - margin_x))
+            click_y = random.randint(y1 + margin_y, max(y1 + margin_y, y2 - margin_y))
 
-        self.adb.scroll_down(extra)
-        time.sleep(0.3)
+            log(f"[클릭 {click_try + 1}/3] [{link_type}] {selected['text'][:40]}... → ({click_x}, {click_y})")
+            self.adb.tap(click_x, click_y, randomize=False)
+            time.sleep(2)
 
-        # 다시 확인 (하이브리드)
-        links = self._find_all_links_by_domain_hybrid(domain)
-        visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
+            xml = self.adb.get_screen_xml(force=True)
+            nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
-        # 랜덤 선택 디버그 로그
-        types_visible = {}
-        for l in visible:
-            t = l.get('link_type', 'unknown')
-            types_visible[t] = types_visible.get(t, 0) + 1
-        log(f"[랜덤] 선택 대상: {len(visible)}개 (도메인:{types_visible.get('domain',0)}, 제목:{types_visible.get('title',0)}, 설명:{types_visible.get('desc',0)})")
+            if not nx.get("found"):
+                log("[성공] 페이지 이동!")
+                return True
 
-        if visible:
-            for click_try in range(3):
-                selected = random.choice(visible)
-                link_type = selected.get('link_type', 'unknown')
-                bounds = selected.get('bounds', (0,0,0,0))
-                log(f"[클릭 {click_try + 1}/3] [{link_type}] {selected['text'][:40]}... 영역:{bounds[2]-bounds[0]}x{bounds[3]-bounds[1]}px")
-                self.adb.tap_element(selected)
-                time.sleep(2)
-
-                xml = self.adb.get_screen_xml(force=True)
-                nx = self.adb.find_element_by_resource_id("nx_query", xml)
-
-                if not nx.get("found"):
-                    log("[성공] 페이지 이동!")
-                    return True
-
-                log("[재시도] 페이지 변경 안 됨")
+            log("[재시도] 페이지 변경 안 됨")
 
         return False
     
