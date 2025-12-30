@@ -4,7 +4,7 @@
 - 프로젝트명: GeeLark ADB 네이버 검색 자동화
 - 시작일: 2025-12-29
 - 마지막 업데이트: 2025-12-30
-- 현재 세션: #5
+- 현재 세션: #6
 
 ---
 
@@ -41,6 +41,9 @@
 | 21 | DOMAIN_KEYWORDS 설정 추가 | adb/config.py, adb/adb_auto.py | 도메인별 제목 키워드 설정 (sidecut.co.kr → ["사이드컷", "sidecut"]), 영어 도메인으로 한글 제목 찾기 가능 | 성공 |
 | 22 | XML 속성 순서 문제 해결 | adb/adb_auto.py | content-desc 패턴을 테스트 버전과 동일하게 변경 (OR 연산자로 두 가지 속성 순서 처리) | 성공 |
 | 23 | CDP 전체 비활성화 | adb/adb_auto.py | _init_mobile_cdp()에서 모든 브라우저 CDP 명시적 비활성화 (탐지 위험 제거) | 성공 |
+| 24 | 랜덤 클릭 단순화 | adb/adb_auto.py | _click_domain_link()를 테스트 버전처럼 단순화 (스크롤/재검색 제거, 바로 랜덤 선택) | 성공 |
+| 25 | 첫 실행 버튼 중복 클릭 방지 | adb/adb_auto.py | handle_browser_first_run()에 last_clicked_bounds 추적, 같은 버튼 중복 클릭 방지 | 성공 |
+| 26 | 첫 실행 버튼 클릭 후 바로 완료 | adb/adb_auto.py | button_ever_clicked 플래그 추가, 버튼 클릭 후 더 이상 버튼 없으면 바로 return True | 성공 |
 
 ---
 
@@ -66,12 +69,15 @@
 | 제목 키워드 불일치 | 영어 도메인(sidecut)으로 한글 제목(사이드컷) 못 찾음 | DOMAIN_KEYWORDS 설정으로 도메인별 키워드 지정 |
 | XML 속성 순서 불일치 | content-desc 패턴이 한 가지 속성 순서만 처리 | OR 연산자(\|)로 두 가지 순서 모두 처리 (테스트 버전 패턴 적용) |
 | 크롬 CDP 활성화 시도 | 삼성만 비활성화, 크롬은 CDP 연결 시도 (버그로 실패) | _init_mobile_cdp()에서 모든 브라우저 명시적 비활성화 |
+| 랜덤 클릭이 도메인만 선택 | _click_domain_link()의 스크롤/재검색 로직이 요소를 잃어버림 | 테스트 버전처럼 단순화 (바로 랜덤 선택) |
+| 첫 실행 버튼 두 번 클릭 | 같은 버튼을 연속으로 클릭하여 콘텐츠 영역 터치 | last_clicked_bounds로 중복 클릭 방지 |
+| 네이버 로드 감지 실패 | "naver" in xml 체크 실패, 첫 실행 버튼 계속 찾음 | button_ever_clicked 후 버튼 없으면 바로 완료 처리 |
 
 ---
 
 ## 현재 진행 중
 
-(없음)
+- 크롬 브라우저 첫 실행 + 검색창 클릭 테스트 중
 
 ---
 
@@ -139,6 +145,14 @@ DOMAIN_KEYWORDS = {
     "sidecut.co.kr": ["사이드컷", "sidecut", "신봉석"],
     # 새 도메인 추가 시 여기에 추가
 }
+```
+
+### 첫 실행 버튼 처리 로직 (handle_browser_first_run)
+```
+1. XML에서 "naver" 또는 "검색" 있으면 → return True (완료)
+2. 첫 실행 버튼 찾기 (Use without an account 등)
+3. 같은 bounds의 버튼은 중복 클릭 방지 (last_clicked_bounds)
+4. 버튼 클릭 후 → 다음에 버튼 없음 → return True (페이지 전환됨)
 ```
 
 ### ADB 명령어
