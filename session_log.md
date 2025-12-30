@@ -56,20 +56,16 @@
 | 36 | step7 overshoot 설정 추가 | adb/config.py, adb/adb_auto.py | 삼성 브라우저용 more_overshoot 설정 추가. 스크롤 후 추가 N번 더 스크롤하여 지나치게 한 뒤 위로 찾기 | 성공 |
 | 37 | step5/step7 스크롤 설정 분리 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG를 step5(more_*)와 step7(domain_*)로 분리. more_scroll_factor, more_overshoot, more_search_direction / domain_scroll_factor, domain_overshoot, domain_search_direction | 성공 |
 | 38 | step5 삼성 브라우저 버그 수정 | adb/adb_auto.py | more_search_direction 설정이 무시되던 버그 수정. 이제 설정에 따라 up/down 방향으로 스크롤하면서 찾기 | 성공 |
-| 39 | ElementCache 초기화 순서 버그 수정 | adb/adb_auto.py | _element_cache가 log 함수 정의 전에 생성되어 NameError 발생하던 버그 수정. 전역 인스턴스를 log 함수 뒤로 이동 | 성공 |
-| 40 | step7 삼성 브라우저 보정값 적용 | adb/adb_auto.py | _step7_samsung_template_matching()에서 domain_scroll_factor, domain_overshoot, domain_search_direction 설정값 적용 (기존: 50% 고정, 방향 하드코딩) | 성공 |
-| 41 | resource-id 캐시 파일 저장 | adb/adb_auto.py | resource-id 캐시를 메모리→파일 저장으로 변경. TTL 유지, 로드 시 만료 항목 자동 정리. 키 형식: resid|{id}|{size} | 성공 |
-| 42 | 브라우저 첫 화면 버튼 캐시 롤백 | adb/adb_auto.py | 화면 로딩 느릴 때 캐시된 좌표로 잘못 클릭하는 문제 방지. 항상 XML 덤프하여 실제 화면에서 버튼 찾기 | 롤백 |
+| 39 | step7 삼성 브라우저 보정값 적용 | adb/adb_auto.py | _step7_samsung_template_matching()에서 domain_scroll_factor, domain_overshoot, domain_search_direction 설정값 적용 (기존: 50% 고정, 방향 하드코딩) | 성공 |
+| 40 | ElementCache 전체 제거 | adb/adb_auto.py | 화면 로딩 전 캐시 좌표로 잘못 클릭하는 문제 방지. ElementCache 클래스, resource-id 캐시, 텍스트 캐시 모두 제거. 항상 실제 XML 확인 | 롤백 |
 
 ---
 
 ## 발생한 이슈 및 해결
 | 이슈 | 원인 | 해결 방법 |
 |------|------|-----------|
-| 브라우저 첫 화면 캐시 클릭 오류 | 화면 로딩 느릴 때 캐시 좌표로 잘못 클릭 | 캐시 기능 롤백, 항상 XML 덤프 |
+| 캐시로 인한 잘못된 클릭 | 화면 로딩 전 캐시 좌표 사용 | ElementCache 전체 제거, 항상 XML 확인 |
 | step7 삼성 브라우저 보정값 미적용 | _step7_samsung_template_matching()에서 설정값 무시 | 함수 내에서 BROWSER_SCROLL_CONFIG 읽어서 적용 |
-| cache 폴더 미생성 | ElementCache가 log 함수 정의 전에 생성되어 NameError | 전역 인스턴스 생성을 log 함수 정의 후로 이동 |
-| 페이지 전환됐는데 실패 판정 | 캐시된 nx_query 값으로 "여전히 존재" 판단 | 페이지 전환/로드 확인 시 use_cache=False |
 | CDP 좌표 불일치 | 삼성 브라우저 CDP 좌표가 실제 화면과 다름 | 템플릿 매칭으로 실제 화면 좌표 찾기 |
 | easyocr 메모리 오류 | GPU 메모리 부족 | OpenCV 템플릿 매칭으로 대체 |
 | pytesseract 한글 인식 불량 | 한글 글자 분리됨 | 템플릿 매칭으로 대체 |
