@@ -47,7 +47,7 @@ CLICK_CONFIG = {
     "sublink_keywords": ["강습요금", "대표자", "소개", "안내", "후기", "코치진"],
 
     # 서브링크 최대 길이 (이 길이 이하일 때만 서브링크 키워드 체크)
-    "sublink_max_length": 25,
+    "sublink_max_length": 10,
 
     # 도메인과 제목/설명 사이 최대 거리 (px)
     "max_distance_from_domain": 300,
