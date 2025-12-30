@@ -692,12 +692,14 @@ class MobileCDP:
             list: [{"found": True, "x": 360, "y": 500, "href": "...", "link_type": "domain/title/desc"}, ...]
         """
         if not self.connected:
+            log("[DEBUG] MobileCDP 연결 안 됨")
             return []
 
         try:
             # 경로 포함 여부 확인
             has_path = '/' in domain and not domain.endswith('/')
             base_domain = domain.split('/')[0]
+            log(f"[DEBUG] CDP 도메인 검색: {domain}, baseDomain={base_domain}, hasPath={has_path}")
 
             viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
             js_code = f'''
@@ -708,14 +710,33 @@ class MobileCDP:
                 var links = document.querySelectorAll('a[href*="' + baseDomain + '"]');
                 var viewportHeight = window.innerHeight;
                 var results = [];
+                var debug = {{
+                    totalLinks: links.length,
+                    excluded: {{
+                        noHref: 0,
+                        isSublink: 0,
+                        notMatch: 0,
+                        isAd: 0,
+                        noSize: 0,
+                        outViewport: 0
+                    }},
+                    allHrefs: []
+                }};
 
                 for (var link of links) {{
                     var href = link.getAttribute('href');
-                    if (!href) continue;
+                    if (!href) {{
+                        debug.excluded.noHref++;
+                        continue;
+                    }}
+                    debug.allHrefs.push(href.substring(0, 80));
 
                     // 1. 서브링크 제외 (data-heatmap-target='.sublink')
                     var heatmapTarget = link.getAttribute('data-heatmap-target');
-                    if (heatmapTarget === '.sublink') continue;
+                    if (heatmapTarget === '.sublink') {{
+                        debug.excluded.isSublink++;
+                        continue;
+                    }}
 
                     // 2. 경로 매칭 체크
                     var isMatch = false;
@@ -731,7 +752,10 @@ class MobileCDP:
                         }}
                     }}
 
-                    if (!isMatch) continue;
+                    if (!isMatch) {{
+                        debug.excluded.notMatch++;
+                        continue;
+                    }}
 
                     // 3. 광고 영역 제외
                     var parent = link.parentElement;
@@ -747,36 +771,48 @@ class MobileCDP:
                         }}
                         parent = parent.parentElement;
                     }}
-                    if (isAd) continue;
+                    if (isAd) {{
+                        debug.excluded.isAd++;
+                        continue;
+                    }}
 
                     var rect = link.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
-                        // 링크 타입 판별 (도메인/제목/설명)
-                        var linkType = 'unknown';
-                        var text = link.textContent.trim();
-                        if (text.includes(baseDomain)) {{
-                            linkType = 'domain';
-                        }} else if (rect.height > 30) {{
-                            linkType = 'title';
-                        }} else {{
-                            linkType = 'desc';
-                        }}
-
-                        results.push({{
-                            found: true,
-                            x: Math.round(rect.left + rect.width / 2),
-                            y: Math.round(rect.top + rect.height / 2),
-                            width: Math.round(rect.width),
-                            height: Math.round(rect.height),
-                            href: href,
-                            text: text.substring(0, 50),
-                            center_x: Math.round(rect.left + rect.width / 2),
-                            center_y: Math.round(rect.top + rect.height / 2),
-                            link_type: linkType
-                        }});
+                    if (rect.width <= 0 || rect.height <= 0) {{
+                        debug.excluded.noSize++;
+                        continue;
                     }}
+
+                    // 뷰포트 체크
+                    if ("{viewport_check}" && !(rect.top > 0 && rect.top < viewportHeight)) {{
+                        debug.excluded.outViewport++;
+                        continue;
+                    }}
+
+                    // 링크 타입 판별 (도메인/제목/설명)
+                    var linkType = 'unknown';
+                    var text = link.textContent.trim();
+                    if (text.includes(baseDomain)) {{
+                        linkType = 'domain';
+                    }} else if (rect.height > 30) {{
+                        linkType = 'title';
+                    }} else {{
+                        linkType = 'desc';
+                    }}
+
+                    results.push({{
+                        found: true,
+                        x: Math.round(rect.left + rect.width / 2),
+                        y: Math.round(rect.top + rect.height / 2),
+                        width: Math.round(rect.width),
+                        height: Math.round(rect.height),
+                        href: href,
+                        text: text.substring(0, 50),
+                        center_x: Math.round(rect.left + rect.width / 2),
+                        center_y: Math.round(rect.top + rect.height / 2),
+                        link_type: linkType
+                    }});
                 }}
-                return results;
+                return {{ results: results, debug: debug }};
             }})()
             '''
 
@@ -786,7 +822,20 @@ class MobileCDP:
             })
 
             if result and "result" in result:
-                links = result["result"].get("value", [])
+                value = result["result"].get("value", {})
+                links = value.get("results", [])
+                debug = value.get("debug", {})
+
+                # 디버그 정보 로깅
+                log(f"[DEBUG] CDP 총 링크: {debug.get('totalLinks', 0)}개")
+                excluded = debug.get('excluded', {})
+                log(f"[DEBUG] CDP 제외: noHref={excluded.get('noHref',0)}, sublink={excluded.get('isSublink',0)}, notMatch={excluded.get('notMatch',0)}, isAd={excluded.get('isAd',0)}, noSize={excluded.get('noSize',0)}, outViewport={excluded.get('outViewport',0)}")
+
+                # 모든 href 로깅 (처음 5개만)
+                all_hrefs = debug.get('allHrefs', [])
+                if all_hrefs:
+                    log(f"[DEBUG] CDP hrefs ({len(all_hrefs)}개): {all_hrefs[:5]}")
+
                 if links:
                     # 링크 타입별 개수 로깅
                     types = {}
@@ -795,11 +844,15 @@ class MobileCDP:
                         types[t] = types.get(t, 0) + 1
                     log(f"[MobileCDP] 도메인 링크 {len(links)}개 발견: {domain} (도메인:{types.get('domain',0)}, 제목:{types.get('title',0)}, 설명:{types.get('desc',0)})")
                     return links
+                else:
+                    log(f"[DEBUG] CDP 결과 0개")
 
             return []
 
         except Exception as e:
             log(f"[MobileCDP] 링크 목록 오류: {e}", "ERROR")
+            import traceback
+            log(f"[DEBUG] 상세 오류: {traceback.format_exc()}")
             return []
 
     def get_scroll_position(self):
@@ -2385,14 +2438,21 @@ class NaverSearchAutomation:
             list: [{"found": True, "center_x": x, "center_y": y, "href": ...}, ...]
         """
         # 1순위: MobileCDP (읽기 전용 - 감지 불가!)
+        log(f"[DEBUG] MobileCDP 상태: mobile_cdp={self.mobile_cdp is not None}, connected={self.mobile_cdp.connected if self.mobile_cdp else 'N/A'}")
+
         if self.mobile_cdp and self.mobile_cdp.connected:
+            log(f"[DEBUG] MobileCDP로 도메인 검색: {domain}")
             results = self.mobile_cdp.find_all_links_by_domain(domain)
+            log(f"[DEBUG] MobileCDP 결과: {len(results) if results else 0}개")
+
             if results:
                 # MobileCDP 형식 → ADB 형식 변환
                 links = []
                 for r in results:
                     width = r.get("width", 100)
                     height = r.get("height", 50)
+                    link_type = r.get("link_type", "unknown")
+                    log(f"[DEBUG] CDP 링크: [{link_type}] {r.get('text', '')[:30]} ({width}x{height})")
                     links.append({
                         "found": True,
                         "center_x": r["center_x"],
@@ -2405,16 +2465,20 @@ class NaverSearchAutomation:
                         ),
                         "href": r.get("href", ""),
                         "text": r.get("text", ""),
-                        "link_type": r.get("link_type", "unknown"),
+                        "link_type": link_type,
                         "source": "mobile_cdp"
                     })
                 return links
+            else:
+                log("[DEBUG] MobileCDP 결과 없음, uiautomator로 fallback")
 
         # 2순위: uiautomator
+        log("[DEBUG] uiautomator로 도메인 검색")
         xml = self.adb.get_screen_xml(force=True)
         links = self.adb.find_all_elements_with_domain(domain, xml)
         for link in links:
             link["source"] = "uiautomator"
+        log(f"[DEBUG] uiautomator 결과: {len(links)}개")
         return links
 
     # ========================================
