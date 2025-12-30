@@ -38,7 +38,8 @@ from config import (
     PHONES, ADB_CONFIG, NAVER_CONFIG,
     SCROLL_CONFIG, TOUCH_CONFIG, TYPING_CONFIG, WAIT_CONFIG,
     COORDINATES, SELECTORS, READING_PAUSE_CONFIG, KEYBOARD_LAYOUT,
-    CDP_CONFIG, DEBUG_CONFIG, BROWSER_SCROLL_CONFIG, DOMAIN_KEYWORDS
+    CDP_CONFIG, DEBUG_CONFIG, BROWSER_SCROLL_CONFIG, DOMAIN_KEYWORDS,
+    ELEMENT_CACHE_CONFIG
 )
 
 
@@ -149,6 +150,88 @@ class CDPScrollCache:
 
 # 전역 캐시 인스턴스
 _scroll_cache = CDPScrollCache()
+
+
+# ============================================
+# UI 요소 위치 캐시 (고정 UI 속도 개선)
+# ============================================
+class ElementCache:
+    """UI 요소 위치 캐시 - TTL 기반, 메모리 저장"""
+
+    def __init__(self):
+        self._ttl = ELEMENT_CACHE_CONFIG.get("ttl_seconds", 1800)  # 30분
+        self._enabled = ELEMENT_CACHE_CONFIG.get("enabled", True)
+        self._cacheable = set(ELEMENT_CACHE_CONFIG.get("cacheable_elements", []))
+        self._cache = {}  # {key: {"data": {...}, "timestamp": time}}
+
+    def _make_key(self, element_id, screen_size=None):
+        """캐시 키 생성 (요소ID + 화면크기)"""
+        if screen_size:
+            return f"{element_id}|{screen_size[0]}x{screen_size[1]}"
+        return element_id
+
+    def is_cacheable(self, element_id):
+        """캐시 가능한 요소인지 확인"""
+        return self._enabled and element_id in self._cacheable
+
+    def get(self, element_id, screen_size=None):
+        """캐시된 요소 정보 반환 (없거나 만료시 None)"""
+        if not self._enabled:
+            return None
+
+        key = self._make_key(element_id, screen_size)
+        if key not in self._cache:
+            return None
+
+        entry = self._cache[key]
+        elapsed = time.time() - entry["timestamp"]
+
+        # TTL 만료 체크
+        if elapsed > self._ttl:
+            del self._cache[key]
+            log(f"[CACHE] '{element_id}' 만료됨 ({elapsed:.0f}초 경과)")
+            return None
+
+        log(f"[CACHE] '{element_id}' 캐시 히트! ({elapsed:.0f}초 전 저장)")
+        return entry["data"]
+
+    def set(self, element_id, data, screen_size=None):
+        """요소 정보 캐시"""
+        if not self._enabled:
+            return
+
+        key = self._make_key(element_id, screen_size)
+        self._cache[key] = {
+            "data": data,
+            "timestamp": time.time()
+        }
+        log(f"[CACHE] '{element_id}' 캐시 저장 (TTL: {self._ttl}초)")
+
+    def invalidate(self, element_id=None, screen_size=None):
+        """캐시 무효화 (특정 요소 또는 전체)"""
+        if element_id is None:
+            self._cache.clear()
+            log("[CACHE] 전체 캐시 초기화")
+        else:
+            key = self._make_key(element_id, screen_size)
+            if key in self._cache:
+                del self._cache[key]
+                log(f"[CACHE] '{element_id}' 캐시 삭제")
+
+    def get_stats(self):
+        """캐시 통계"""
+        now = time.time()
+        valid = sum(1 for e in self._cache.values() if now - e["timestamp"] < self._ttl)
+        return {
+            "total": len(self._cache),
+            "valid": valid,
+            "expired": len(self._cache) - valid,
+            "ttl": self._ttl
+        }
+
+
+# 전역 요소 캐시 인스턴스
+_element_cache = ElementCache()
 
 
 # ============================================
@@ -2133,22 +2216,31 @@ class ADBController:
         self._last_xml_time = now
         return xml
     
-    def find_element_by_resource_id(self, resource_id, xml=None):
-        """리소스 ID로 요소 찾기"""
+    def find_element_by_resource_id(self, resource_id, xml=None, use_cache=True):
+        """리소스 ID로 요소 찾기 (캐시 지원)"""
+        screen_size = (self.screen_width, self.screen_height)
+
+        # 캐시 체크 (캐시 가능한 요소이고, use_cache=True일 때)
+        if use_cache and _element_cache.is_cacheable(resource_id):
+            cached = _element_cache.get(resource_id, screen_size)
+            if cached:
+                return cached
+
+        # XML 가져오기
         if xml is None:
             xml = self.get_screen_xml(force=True)
         if not xml:
             return {"found": False}
-        
+
         # bounds와 resource-id 순서 무관하게 찾기
         pattern1 = rf'resource-id="[^"]*{re.escape(resource_id)}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
         pattern2 = rf'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*resource-id="[^"]*{re.escape(resource_id)}[^"]*"'
-        
+
         match = re.search(pattern1, xml) or re.search(pattern2, xml)
-        
+
         if match:
             x1, y1, x2, y2 = map(int, match.groups())
-            return {
+            result = {
                 "found": True,
                 "bounds": (x1, y1, x2, y2),
                 "center_x": (x1 + x2) // 2,
@@ -2156,6 +2248,10 @@ class ADBController:
                 "width": x2 - x1,
                 "height": y2 - y1
             }
+            # 캐시 저장 (캐시 가능한 요소일 때)
+            if use_cache and _element_cache.is_cacheable(resource_id):
+                _element_cache.set(resource_id, result, screen_size)
+            return result
         return {"found": False}
     
     def find_element_by_text(self, text, partial=True, xml=None):
