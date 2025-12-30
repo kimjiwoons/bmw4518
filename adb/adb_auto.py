@@ -3302,7 +3302,8 @@ class NaverSearchAutomation:
                 # 10초 대기 (0.5초 * 20)
                 for _ in range(20):
                     xml = self.adb.get_screen_xml(force=True)
-                    nx = self.adb.find_element_by_resource_id("nx_query", xml)
+                    # 페이지 로드 확인은 캐시 사용 안 함
+                    nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
 
                     if nx.get("found"):
                         log("[성공] 더보기 페이지 로딩 완료!")
@@ -3359,7 +3360,8 @@ class NaverSearchAutomation:
         max_wait = 50
         for _ in range(max_wait * 2):
             xml = self.adb.get_screen_xml(force=True)
-            nx = self.adb.find_element_by_resource_id("nx_query", xml)
+            # 페이지 로드 확인은 캐시 사용 안 함
+            nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
 
             if nx.get("found"):
                 log("[성공] 더보기 페이지 로딩 완료!")
@@ -3720,7 +3722,8 @@ class NaverSearchAutomation:
             # 8. 페이지 전환 확인
             log(f"[STEP7-CLICK] 페이지 전환 확인 중...")
             xml = self.adb.get_screen_xml(force=True)
-            nx = self.adb.find_element_by_resource_id("nx_query", xml)
+            # 페이지 전환 확인은 캐시 사용 안 함 (실제 화면 상태 확인 필요)
+            nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
 
             if not nx.get("found"):
                 log(f"[STEP7-CLICK] [SUCCESS] 페이지 이동 성공!")
