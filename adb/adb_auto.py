@@ -2022,27 +2022,16 @@ class ADBController:
             if not xml:
                 continue
 
-            # 네이버 페이지가 로드되면 설정 완료 (먼저 체크!)
+            # 네이버 페이지가 로드되면 설정 완료
             if "naver" in xml.lower() or "검색" in xml:
-                # 번역 팝업 체크 및 닫기
-                if "Translate" in xml or "번역" in xml:
-                    log("[ADB] 번역 팝업 감지, 팝업 바깥 클릭으로 닫기...")
-                    # 네이버 로고 영역 클릭 (팝업 닫기)
-                    self.tap(int(self.screen_width * 0.1), int(self.screen_height * 0.15), randomize=False)
-                    time.sleep(0.5)
                 log("[ADB] 브라우저 설정 완료, 네이버 페이지 로드됨")
                 return True
 
-            # 첫 실행 버튼 찾아서 클릭 (네이버 로드 전에만!)
+            # 첫 실행 버튼 찾아서 클릭
             button_found = False
             for button_text in buttons_to_find:
                 element = self.find_element_by_text(button_text, partial=False, xml=xml)
                 if element and element.get("found"):
-                    # 버튼 크기 검증 (너비가 화면 70% 이상이면 컨테이너로 판단)
-                    width = element.get("width", 0)
-                    if width > self.screen_width * 0.7:
-                        log(f"[ADB] '{button_text}' 무시 (너비 {width}px > 70%, 컨테이너)")
-                        continue
                     log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
                     self.tap_element(element)
                     time.sleep(0.5)
@@ -2050,14 +2039,10 @@ class ADBController:
                     break
 
             if not button_found:
-                # 부분 매칭으로 재시도 (크기 검증 포함)
+                # 부분 매칭으로 재시도
                 for button_text in buttons_to_find:
                     element = self.find_element_by_text(button_text, partial=True, xml=xml)
                     if element and element.get("found"):
-                        width = element.get("width", 0)
-                        if width > self.screen_width * 0.7:
-                            log(f"[ADB] '{button_text}' 무시 (너비 {width}px > 70%, 컨테이너)")
-                            continue
                         log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
                         self.tap_element(element)
                         time.sleep(0.5)
