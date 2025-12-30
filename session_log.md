@@ -52,6 +52,7 @@
 | 32 | 삼성만 좌표 기반 검색창 클릭 | adb/adb_auto.py | coordinate_only_browsers에서 firefox, opera, edge 제거. 삼성만 XML에서 웹 요소 안 보여서 좌표 모드 | 성공 |
 | 33 | UI 요소 캐시 구현 | adb/config.py, adb/adb_auto.py | ElementCache 클래스 구현 (TTL 30분), find_element_by_resource_id에 캐시 적용. 삼성 제외 (좌표 기반) | 성공 |
 | 34 | 페이지 전환 확인 캐시 비활성화 | adb/adb_auto.py | nx_query 찾을 때 use_cache=False 추가. 페이지 전환/로드 확인은 실제 화면 상태 필요 | 성공 |
+| 35 | 기기별 파일 기반 캐시 | adb/config.py, adb/adb_auto.py | 브라우저 첫 실행 버튼 위치를 기기별 JSON 파일로 캐시. 파일 삭제하면 다시 덤프. cache/ 디렉토리에 element_cache_{device}.json 생성 | 성공 |
 
 ---
 
@@ -192,6 +193,12 @@ ELEMENT_CACHE_CONFIG = {
         "query",           # 검색 모드 입력창
         "nx_query",        # 검색 결과 페이지 검색창
     ],
+    "cache_dir": "cache",  # 캐시 파일 디렉토리
+    "cacheable_text_elements": {  # 브라우저별 첫 실행 버튼
+        "chrome": ["Use without an account", "동의 및 계속", ...],
+        "samsung": ["계속", "동의", ...],
+        # ... 기타 브라우저
+    },
 }
 ```
 - 적용 브라우저: 크롬, 파이어폭스, 오페라, 엣지
@@ -199,6 +206,18 @@ ELEMENT_CACHE_CONFIG = {
 - 캐시 히트 시 XML 덤프 생략 → 속도 향상
 - 화면 크기별 캐시 키 분리
 - `[CACHE]` 접두사 로그로 캐시 동작 확인
+
+### 기기별 파일 캐시 (브라우저 첫 실행 버튼)
+브라우저 버전이 기기마다 달라 첫 실행 버튼 위치가 다를 수 있음
+```
+adb/cache/
+├── element_cache_98_98_125_37_20920.json   # 테스트폰1
+├── element_cache_128_14_109_188_20569.json # 폰2
+└── element_cache_128_14_109_189_20570.json # 폰3
+```
+- 첫 덤프 시 자동 캐시
+- 브라우저 업데이트로 버튼 위치 변경 시: 캐시 파일 삭제 → 다시 덤프
+- 캐시 키 형식: `text|{browser}|{button_text}|{width}x{height}`
 
 ### ADB 명령어
 ```bash

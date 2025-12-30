@@ -156,13 +156,72 @@ _scroll_cache = CDPScrollCache()
 # UI 요소 위치 캐시 (고정 UI 속도 개선)
 # ============================================
 class ElementCache:
-    """UI 요소 위치 캐시 - TTL 기반, 메모리 저장"""
+    """UI 요소 위치 캐시 - 파일 기반, 기기별 저장
+
+    - resource-id 캐시: TTL 기반 (30분, 메모리)
+    - 텍스트 요소 캐시: 파일 기반 (기기별, 영구 저장)
+      → 파일 삭제하면 다시 덤프
+    """
 
     def __init__(self):
         self._ttl = ELEMENT_CACHE_CONFIG.get("ttl_seconds", 1800)  # 30분
         self._enabled = ELEMENT_CACHE_CONFIG.get("enabled", True)
         self._cacheable = set(ELEMENT_CACHE_CONFIG.get("cacheable_elements", []))
-        self._cache = {}  # {key: {"data": {...}, "timestamp": time}}
+        self._cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
+        self._cache = {}  # 메모리 캐시 {key: {"data": {...}, "timestamp": time}}
+
+        # 캐시 디렉토리 설정
+        cache_dir = ELEMENT_CACHE_CONFIG.get("cache_dir", "cache")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self._cache_dir = os.path.join(script_dir, cache_dir)
+
+        # 캐시 디렉토리 생성
+        if not os.path.exists(self._cache_dir):
+            os.makedirs(self._cache_dir)
+            log(f"[CACHE] 캐시 디렉토리 생성: {self._cache_dir}")
+
+        # 파일 캐시 (기기별 로드)
+        self._file_cache = {}  # {device_id: {key: data}}
+        self._current_device_id = None
+
+    def set_device(self, device_id):
+        """현재 기기 설정 및 파일 캐시 로드"""
+        if device_id == self._current_device_id:
+            return
+
+        self._current_device_id = device_id
+        self._load_file_cache(device_id)
+
+    def _get_cache_file_path(self, device_id):
+        """기기별 캐시 파일 경로"""
+        # ADB 주소에서 특수문자 제거 (파일명으로 사용)
+        safe_id = device_id.replace(":", "_").replace(".", "_")
+        return os.path.join(self._cache_dir, f"element_cache_{safe_id}.json")
+
+    def _load_file_cache(self, device_id):
+        """파일에서 캐시 로드"""
+        cache_file = self._get_cache_file_path(device_id)
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    self._file_cache[device_id] = json.load(f)
+                    count = len(self._file_cache[device_id])
+                    log(f"[CACHE] 파일 캐시 로드: {cache_file} ({count}개 항목)")
+            else:
+                self._file_cache[device_id] = {}
+                log(f"[CACHE] 새 캐시 파일 생성 예정: {cache_file}")
+        except Exception as e:
+            log(f"[CACHE] 파일 캐시 로드 실패: {e}", "WARN")
+            self._file_cache[device_id] = {}
+
+    def _save_file_cache(self, device_id):
+        """파일에 캐시 저장"""
+        cache_file = self._get_cache_file_path(device_id)
+        try:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self._file_cache.get(device_id, {}), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log(f"[CACHE] 파일 캐시 저장 실패: {e}", "WARN")
 
     def _make_key(self, element_id, screen_size=None):
         """캐시 키 생성 (요소ID + 화면크기)"""
@@ -170,12 +229,25 @@ class ElementCache:
             return f"{element_id}|{screen_size[0]}x{screen_size[1]}"
         return element_id
 
+    def _make_text_key(self, text, browser, screen_size=None):
+        """텍스트 요소 캐시 키 생성 (브라우저 + 텍스트 + 화면크기)"""
+        if screen_size:
+            return f"text|{browser}|{text}|{screen_size[0]}x{screen_size[1]}"
+        return f"text|{browser}|{text}"
+
     def is_cacheable(self, element_id):
-        """캐시 가능한 요소인지 확인"""
+        """캐시 가능한 요소인지 확인 (resource-id)"""
         return self._enabled and element_id in self._cacheable
 
+    def is_text_cacheable(self, text, browser):
+        """캐시 가능한 텍스트 요소인지 확인"""
+        if not self._enabled:
+            return False
+        browser_texts = self._cacheable_text.get(browser, [])
+        return text in browser_texts
+
     def get(self, element_id, screen_size=None):
-        """캐시된 요소 정보 반환 (없거나 만료시 None)"""
+        """캐시된 요소 정보 반환 (없거나 만료시 None) - resource-id용"""
         if not self._enabled:
             return None
 
@@ -196,7 +268,7 @@ class ElementCache:
         return entry["data"]
 
     def set(self, element_id, data, screen_size=None):
-        """요소 정보 캐시"""
+        """요소 정보 캐시 - resource-id용"""
         if not self._enabled:
             return
 
@@ -207,26 +279,78 @@ class ElementCache:
         }
         log(f"[CACHE] '{element_id}' 캐시 저장 (TTL: {self._ttl}초)")
 
+    def get_text(self, text, browser, screen_size=None):
+        """캐시된 텍스트 요소 정보 반환 - 파일 기반 (기기별)"""
+        if not self._enabled or not self._current_device_id:
+            return None
+
+        key = self._make_text_key(text, browser, screen_size)
+        device_cache = self._file_cache.get(self._current_device_id, {})
+
+        if key in device_cache:
+            log(f"[CACHE] 텍스트 '{text}' ({browser}) 캐시 히트!")
+            return device_cache[key]
+
+        return None
+
+    def set_text(self, text, browser, data, screen_size=None):
+        """텍스트 요소 정보 캐시 - 파일 기반 (기기별)"""
+        if not self._enabled or not self._current_device_id:
+            return
+
+        key = self._make_text_key(text, browser, screen_size)
+
+        if self._current_device_id not in self._file_cache:
+            self._file_cache[self._current_device_id] = {}
+
+        self._file_cache[self._current_device_id][key] = data
+        self._save_file_cache(self._current_device_id)
+        log(f"[CACHE] 텍스트 '{text}' ({browser}) 파일 캐시 저장")
+
     def invalidate(self, element_id=None, screen_size=None):
         """캐시 무효화 (특정 요소 또는 전체)"""
         if element_id is None:
             self._cache.clear()
-            log("[CACHE] 전체 캐시 초기화")
+            log("[CACHE] 전체 메모리 캐시 초기화")
         else:
             key = self._make_key(element_id, screen_size)
             if key in self._cache:
                 del self._cache[key]
                 log(f"[CACHE] '{element_id}' 캐시 삭제")
 
+    def invalidate_text(self, text=None, browser=None, screen_size=None):
+        """텍스트 캐시 무효화 (파일 캐시)"""
+        if not self._current_device_id:
+            return
+
+        device_cache = self._file_cache.get(self._current_device_id, {})
+
+        if text is None:
+            # 전체 텍스트 캐시 삭제
+            keys_to_delete = [k for k in device_cache.keys() if k.startswith("text|")]
+            for key in keys_to_delete:
+                del device_cache[key]
+            self._save_file_cache(self._current_device_id)
+            log("[CACHE] 전체 텍스트 캐시 삭제")
+        else:
+            key = self._make_text_key(text, browser, screen_size)
+            if key in device_cache:
+                del device_cache[key]
+                self._save_file_cache(self._current_device_id)
+                log(f"[CACHE] 텍스트 '{text}' 캐시 삭제")
+
     def get_stats(self):
         """캐시 통계"""
         now = time.time()
         valid = sum(1 for e in self._cache.values() if now - e["timestamp"] < self._ttl)
+        file_count = len(self._file_cache.get(self._current_device_id, {})) if self._current_device_id else 0
         return {
-            "total": len(self._cache),
-            "valid": valid,
-            "expired": len(self._cache) - valid,
-            "ttl": self._ttl
+            "memory_total": len(self._cache),
+            "memory_valid": valid,
+            "memory_expired": len(self._cache) - valid,
+            "file_count": file_count,
+            "ttl": self._ttl,
+            "device_id": self._current_device_id
         }
 
 
@@ -1636,6 +1760,10 @@ class ADBController:
 
             # 실제 화면 크기 자동 감지
             self._detect_screen_size()
+
+            # 기기별 파일 캐시 로드
+            _element_cache.set_device(self.adb_address)
+
             return True
         log(f"ADB 연결 실패: {result}", "ERROR")
         return False
@@ -2030,7 +2158,7 @@ class ADBController:
             return False
 
     def handle_browser_first_run(self, browser="chrome", max_attempts=10):
-        """브라우저 첫 실행 설정 화면 자동 처리
+        """브라우저 첫 실행 설정 화면 자동 처리 (캐시 지원)
 
         Args:
             browser: 브라우저 종류 (chrome, samsung, edge, opera, firefox)
@@ -2038,72 +2166,49 @@ class ADBController:
 
         Returns:
             bool: 처리 완료 여부
+
+        캐시 로직:
+            - 첫 실행 버튼 위치를 기기별 파일에 캐시
+            - 캐시 있으면 XML 덤프 없이 바로 클릭
+            - 캐시 파일 삭제하면 다시 덤프하여 캐시
         """
         log(f"[ADB] 브라우저 첫 실행 설정 확인 ({browser})...")
 
-        # 브라우저별 첫 실행 버튼 텍스트
-        first_run_buttons = {
-            "chrome": [
-                "Use without an account",  # 계정 없이 사용 (영어)
-                "계정 없이 사용",  # 계정 없이 사용 (한글)
-                "동의 및 계속",  # Accept & Continue (한글)
-                "Accept & continue",  # Accept & Continue (영어)
-                "동의",
-                "계속",
-                "아니요",  # No thanks for sync / translate popup
-                "No thanks",
-                "No, thanks",
-                "건너뛰기",
-                "Skip",
-                "사용 안함",
-            ],
-            "samsung": [
-                "계속",  # Continue 버튼 (첫 화면)
-                "계속하기",  # Continue 버튼 (다른 형태)
-                "동의",
-                "시작",
-                "Start",
-                "확인",
-                "OK",
-                "건너뛰기",
-                "Skip",
-            ],
-            "edge": [
-                "수락",
-                "Accept",
-                "시작",
-                "Start",
-                "건너뛰기",
-                "Skip",
-                "아니요",
-                "No thanks",
-            ],
-            "opera": [
-                "동의",
-                "Accept",
-                "시작",
-                "Start",
-                "건너뛰기",
-                "Skip",
-            ],
-            "firefox": [
-                "시작하기",
-                "Get started",
-                "건너뛰기",
-                "Skip",
-                "나중에",
-                "Later",
-            ],
-        }
+        # 브라우저별 첫 실행 버튼 텍스트 (config.py에서 가져오거나 기본값 사용)
+        from config import ELEMENT_CACHE_CONFIG
+        cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
+        first_run_buttons = cacheable_text.get(browser, [
+            "동의", "계속", "Skip", "건너뛰기", "Accept", "OK"
+        ])
 
-        buttons_to_find = first_run_buttons.get(browser, first_run_buttons["chrome"])
-        last_clicked_bounds = None  # 마지막 클릭한 버튼 bounds (중복 클릭 방지)
-        button_ever_clicked = False  # 버튼 클릭한 적 있는지
+        screen_size = (self.screen_width, self.screen_height)
+        last_clicked_bounds = None
+        button_ever_clicked = False
 
         for attempt in range(max_attempts):
             time.sleep(1)
-            xml = self.get_screen_xml(force=True)
 
+            # 1. 캐시된 버튼 위치로 먼저 시도 (XML 덤프 없이)
+            button_found = False
+            for button_text in first_run_buttons:
+                cached = _element_cache.get_text(button_text, browser, screen_size)
+                if cached and cached.get("found"):
+                    bounds = cached.get("bounds")
+                    if bounds == last_clicked_bounds:
+                        continue
+                    log(f"[ADB] 첫 실행 버튼 캐시 사용: '{button_text}'")
+                    self.tap_element(cached)
+                    last_clicked_bounds = bounds
+                    button_ever_clicked = True
+                    time.sleep(0.5)
+                    button_found = True
+                    break
+
+            if button_found:
+                continue  # 다음 시도로
+
+            # 2. 캐시 없으면 XML 덤프하여 찾기
+            xml = self.get_screen_xml(force=True)
             if not xml:
                 continue
 
@@ -2112,16 +2217,19 @@ class ADBController:
                 log("[ADB] 브라우저 설정 완료, 네이버 페이지 로드됨")
                 return True
 
-            # 첫 실행 버튼 찾아서 클릭
-            button_found = False
-            for button_text in buttons_to_find:
+            # 첫 실행 버튼 찾아서 클릭 (정확 매칭)
+            for button_text in first_run_buttons:
                 element = self.find_element_by_text(button_text, partial=False, xml=xml)
                 if element and element.get("found"):
                     bounds = element.get("bounds")
-                    # 같은 bounds의 버튼은 중복 클릭 방지
                     if bounds == last_clicked_bounds:
-                        continue  # 로그 없이 건너뜀
+                        continue
                     log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
+
+                    # 캐시에 저장 (다음에 XML 덤프 없이 사용)
+                    if _element_cache.is_text_cacheable(button_text, browser):
+                        _element_cache.set_text(button_text, browser, element, screen_size)
+
                     self.tap_element(element)
                     last_clicked_bounds = bounds
                     button_ever_clicked = True
@@ -2131,13 +2239,18 @@ class ADBController:
 
             if not button_found:
                 # 부분 매칭으로 재시도
-                for button_text in buttons_to_find:
+                for button_text in first_run_buttons:
                     element = self.find_element_by_text(button_text, partial=True, xml=xml)
                     if element and element.get("found"):
                         bounds = element.get("bounds")
                         if bounds == last_clicked_bounds:
-                            continue  # 로그 없이 건너뜀
+                            continue
                         log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
+
+                        # 캐시에 저장
+                        if _element_cache.is_text_cacheable(button_text, browser):
+                            _element_cache.set_text(button_text, browser, element, screen_size)
+
                         self.tap_element(element)
                         last_clicked_bounds = bounds
                         button_ever_clicked = True
@@ -2146,7 +2259,6 @@ class ADBController:
                         break
 
             if not button_found:
-                # 버튼 클릭한 적 있고 + 더 이상 버튼 없음 = 페이지 전환됨
                 if button_ever_clicked:
                     log("[ADB] 첫 실행 버튼 클릭 완료, 페이지 전환됨")
                     return True
