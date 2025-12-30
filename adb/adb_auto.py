@@ -2254,10 +2254,17 @@ class ADBController:
         domain_y = domain_elem["center_y"]
 
         # 2. 제목/설명 찾기 (content-desc 속성, clickable="true")
-        content_pattern = r'<node[^>]+clickable="true"[^>]+content-desc="([^"]+)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
+        # XML 속성 순서가 다를 수 있으므로 별도로 체크
+        content_pattern = r'<node([^>]+)content-desc="([^"]+)"([^>]+)bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
 
         for match in re.finditer(content_pattern, xml):
-            content_desc, x1, y1, x2, y2 = match.groups()
+            before_attr, content_desc, after_attr, x1, y1, x2, y2 = match.groups()
+            full_attrs = before_attr + after_attr
+
+            # clickable="true" 체크 (속성 순서 무관)
+            if 'clickable="true"' not in full_attrs:
+                continue
+
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
             # 빈 텍스트 제외
