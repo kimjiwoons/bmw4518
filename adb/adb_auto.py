@@ -158,7 +158,7 @@ _scroll_cache = CDPScrollCache()
 class ElementCache:
     """UI 요소 위치 캐시 - 파일 기반, 기기별 저장
 
-    - resource-id 캐시: TTL 기반 (30분, 메모리)
+    - resource-id 캐시: TTL 기반 (30분), 파일 저장
     - 텍스트 요소 캐시: 파일 기반 (기기별, 영구 저장)
       → 파일 삭제하면 다시 덤프
     """
@@ -168,7 +168,6 @@ class ElementCache:
         self._enabled = ELEMENT_CACHE_CONFIG.get("enabled", True)
         self._cacheable = set(ELEMENT_CACHE_CONFIG.get("cacheable_elements", []))
         self._cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
-        self._cache = {}  # 메모리 캐시 {key: {"data": {...}, "timestamp": time}}
 
         # 캐시 디렉토리 설정
         cache_dir = ELEMENT_CACHE_CONFIG.get("cache_dir", "cache")
@@ -199,13 +198,31 @@ class ElementCache:
         return os.path.join(self._cache_dir, f"element_cache_{safe_id}.json")
 
     def _load_file_cache(self, device_id):
-        """파일에서 캐시 로드"""
+        """파일에서 캐시 로드 (TTL 만료된 resource-id 캐시 정리)"""
         cache_file = self._get_cache_file_path(device_id)
         try:
             if os.path.exists(cache_file):
                 with open(cache_file, 'r', encoding='utf-8') as f:
-                    self._file_cache[device_id] = json.load(f)
-                    count = len(self._file_cache[device_id])
+                    loaded = json.load(f)
+
+                # TTL 만료된 resource-id 캐시 정리
+                now = time.time()
+                cleaned = {}
+                expired_count = 0
+                for key, value in loaded.items():
+                    # resource-id 캐시는 resid| 접두사 사용
+                    if key.startswith("resid|") and isinstance(value, dict) and "timestamp" in value:
+                        if now - value["timestamp"] > self._ttl:
+                            expired_count += 1
+                            continue  # 만료됨, 제외
+                    cleaned[key] = value
+
+                self._file_cache[device_id] = cleaned
+                count = len(cleaned)
+                if expired_count > 0:
+                    log(f"[CACHE] 파일 캐시 로드: {cache_file} ({count}개 항목, {expired_count}개 만료 삭제)")
+                    self._save_file_cache(device_id)  # 정리된 캐시 저장
+                else:
                     log(f"[CACHE] 파일 캐시 로드: {cache_file} ({count}개 항목)")
             else:
                 self._file_cache[device_id] = {}
@@ -224,10 +241,10 @@ class ElementCache:
             log(f"[CACHE] 파일 캐시 저장 실패: {e}", "WARN")
 
     def _make_key(self, element_id, screen_size=None):
-        """캐시 키 생성 (요소ID + 화면크기)"""
+        """resource-id 캐시 키 생성 (resid 접두사 + 요소ID + 화면크기)"""
         if screen_size:
-            return f"{element_id}|{screen_size[0]}x{screen_size[1]}"
-        return element_id
+            return f"resid|{element_id}|{screen_size[0]}x{screen_size[1]}"
+        return f"resid|{element_id}"
 
     def _make_text_key(self, text, browser, screen_size=None):
         """텍스트 요소 캐시 키 생성 (브라우저 + 텍스트 + 화면크기)"""
@@ -247,20 +264,23 @@ class ElementCache:
         return text in browser_texts
 
     def get(self, element_id, screen_size=None):
-        """캐시된 요소 정보 반환 (없거나 만료시 None) - resource-id용"""
-        if not self._enabled:
+        """캐시된 요소 정보 반환 (없거나 만료시 None) - resource-id용, 파일 기반"""
+        if not self._enabled or not self._current_device_id:
             return None
 
         key = self._make_key(element_id, screen_size)
-        if key not in self._cache:
+        device_cache = self._file_cache.get(self._current_device_id, {})
+
+        if key not in device_cache:
             return None
 
-        entry = self._cache[key]
+        entry = device_cache[key]
         elapsed = time.time() - entry["timestamp"]
 
         # TTL 만료 체크
         if elapsed > self._ttl:
-            del self._cache[key]
+            del device_cache[key]
+            self._save_file_cache(self._current_device_id)
             log(f"[CACHE] '{element_id}' 만료됨 ({elapsed:.0f}초 경과)")
             return None
 
@@ -268,16 +288,21 @@ class ElementCache:
         return entry["data"]
 
     def set(self, element_id, data, screen_size=None):
-        """요소 정보 캐시 - resource-id용"""
-        if not self._enabled:
+        """요소 정보 캐시 - resource-id용, 파일 기반"""
+        if not self._enabled or not self._current_device_id:
             return
 
         key = self._make_key(element_id, screen_size)
-        self._cache[key] = {
+
+        if self._current_device_id not in self._file_cache:
+            self._file_cache[self._current_device_id] = {}
+
+        self._file_cache[self._current_device_id][key] = {
             "data": data,
             "timestamp": time.time()
         }
-        log(f"[CACHE] '{element_id}' 캐시 저장 (TTL: {self._ttl}초)")
+        self._save_file_cache(self._current_device_id)
+        log(f"[CACHE] '{element_id}' 파일 캐시 저장 (TTL: {self._ttl}초)")
 
     def get_text(self, text, browser, screen_size=None):
         """캐시된 텍스트 요소 정보 반환 - 파일 기반 (기기별)"""
@@ -2178,6 +2203,9 @@ class ADBController:
         """
         log(f"[ADB] 브라우저 첫 실행 설정 확인 ({browser})...")
 
+        # 기기별 캐시 설정 (connect() 이전에 호출된 경우 대비)
+        _element_cache.set_device(self.adb_address)
+
         # 브라우저별 첫 실행 버튼 텍스트 (config.py에서 가져오거나 기본값 사용)
         from config import ELEMENT_CACHE_CONFIG
         cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
@@ -3527,10 +3555,11 @@ class NaverSearchAutomation:
         """삼성 브라우저 전용: 템플릿 매칭으로 도메인 찾아서 클릭
 
         로직:
-        1. 스크롤 계산값의 50%만 스크롤 (랜덤 보상값 적용)
-        2. 스크롤하면서 도메인 템플릿 매칭
-        3. 찾으면 서브링크 영역 제외하고 랜덤 클릭
-        4. 페이지 전환 확인, 실패 시 무한 재시도
+        1. 스크롤 계산값 × 보정값(domain_scroll_factor) 적용
+        2. overshoot 적용 (일부러 지나치게)
+        3. search_direction 방향으로 스크롤하면서 도메인 템플릿 매칭
+        4. 찾으면 서브링크 영역 제외하고 랜덤 클릭
+        5. 페이지 전환 확인, 실패 시 무한 재시도
         """
         log("[7단계] 삼성 브라우저 - 템플릿 매칭 모드")
 
@@ -3544,20 +3573,26 @@ class NaverSearchAutomation:
             log("[INFO] template_domain.png 파일을 adb/ 폴더에 추가하세요")
             return False
 
-        # 1단계: 스크롤 계산값의 50%만 스크롤
+        # 브라우저별 보정값 읽기 (step7: 사이트 찾기)
+        browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {})
+        domain_scroll_factor = browser_config.get("domain_scroll_factor", 1.0)
+        domain_overshoot = browser_config.get("domain_overshoot", 0)
+        search_direction = browser_config.get("domain_search_direction", "down")
+
+        # 1단계: 스크롤 계산값 × 보정값 적용
         if self.cdp_info and self.cdp_info.get("domain_scroll_count", 0) > 0:
             full_scroll = self.cdp_info["domain_scroll_count"]
-            half_scroll = max(1, full_scroll // 2)  # 50%
-            log(f"[7단계] 계산값 {full_scroll}의 50% = {half_scroll}번 스크롤")
+            adjusted_scroll = max(1, int(full_scroll * domain_scroll_factor))
+            log(f"[7단계] 계산값 {full_scroll} × 보정({domain_scroll_factor}) = {adjusted_scroll}번 스크롤")
         else:
-            half_scroll = 5  # 기본값
-            log(f"[7단계] 스크롤 횟수 기본값: {half_scroll}번")
+            adjusted_scroll = 5  # 기본값
+            log(f"[7단계] 스크롤 횟수 기본값: {adjusted_scroll}번")
 
         # 스크롤 오차 초기화
         self.adb.reset_scroll_debt()
 
-        # 50% 스크롤 실행
-        for i in range(half_scroll):
+        # 보정값 적용된 스크롤 실행
+        for i in range(adjusted_scroll):
             self.adb.scroll_down(compensated=True)
 
             if READING_PAUSE_CONFIG["enabled"] and random.random() < READING_PAUSE_CONFIG["probability"]:
@@ -3568,12 +3603,20 @@ class NaverSearchAutomation:
                 time.sleep(random.uniform(0.1, 0.2))
 
             if (i + 1) % 5 == 0:
-                log(f"[7단계] 스크롤 {i + 1}/{half_scroll}...")
+                log(f"[7단계] 스크롤 {i + 1}/{adjusted_scroll}...")
 
-        log(f"[7단계] 50% 스크롤 완료, 오차: {self.adb.get_scroll_debt()}px")
+        log(f"[7단계] 스크롤 완료, 오차: {self.adb.get_scroll_debt()}px")
 
-        # 2단계: 스크롤하면서 도메인 템플릿 매칭
-        log("[7단계] 템플릿 매칭으로 도메인 찾기 시작...")
+        # 2단계: overshoot 적용 (일부러 더 스크롤해서 지나치게)
+        if domain_overshoot > 0:
+            log(f"[7단계] overshoot: {domain_overshoot}번 추가 스크롤")
+            for i in range(domain_overshoot):
+                self.adb.scroll_down(compensated=True)
+                time.sleep(random.uniform(0.1, 0.2))
+
+        # 3단계: search_direction 방향으로 스크롤하면서 도메인 템플릿 매칭
+        direction_text = "위로" if search_direction == "up" else "아래로"
+        log(f"[7단계] 템플릿 매칭으로 도메인 찾기 시작... ({direction_text} 스크롤)")
         max_scroll_attempts = 50  # 최대 스크롤 횟수
 
         for attempt in range(max_scroll_attempts):
@@ -3583,21 +3626,24 @@ class NaverSearchAutomation:
             if result.get("found"):
                 log(f"[발견] 도메인 템플릿 매칭 성공! 위치: ({result['x']}, {result['y']})")
 
-                # 3단계: 서브링크 영역 제외하고 클릭 영역 계산
+                # 4단계: 서브링크 영역 제외하고 클릭 영역 계산
                 click_x, click_y = self._calculate_click_position(
                     result, sublink_template
                 )
 
-                # 4단계: 무한 재시도 클릭
+                # 5단계: 무한 재시도 클릭
                 return self._click_domain_with_retry(click_x, click_y, domain_template)
 
-            # 못 찾으면 위로 스크롤 (200~300px 랜덤)
+            # 못 찾으면 설정된 방향으로 스크롤 (200~300px 랜덤)
             scroll_amount = random.randint(200, 300)
-            self.adb.scroll_up(scroll_amount)
+            if search_direction == "up":
+                self.adb.scroll_up(scroll_amount)
+            else:
+                self.adb.scroll_down(scroll_amount)
             time.sleep(random.uniform(0.3, 0.5))
 
             if (attempt + 1) % 10 == 0:
-                log(f"[7단계] 스크롤하며 찾는 중... {attempt + 1}/{max_scroll_attempts}")
+                log(f"[7단계] {direction_text} 스크롤하며 찾는 중... {attempt + 1}/{max_scroll_attempts}")
 
         log("[실패] 도메인 템플릿 못 찾음", "ERROR")
         return False
