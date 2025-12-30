@@ -682,36 +682,97 @@ class MobileCDP:
     def find_all_links_by_domain(self, domain, viewport_only=True):
         """도메인으로 모든 링크 찾기 → 좌표 목록 반환 (읽기 전용!)
 
+        도메인, 제목, 설명 링크 모두 포함 (서브링크 제외)
+
         Args:
             domain: 찾을 도메인
             viewport_only: True면 현재 뷰포트 안에 있는 링크만 반환
 
         Returns:
-            list: [{"found": True, "x": 360, "y": 500, "href": "..."}, ...]
+            list: [{"found": True, "x": 360, "y": 500, "href": "...", "link_type": "domain/title/desc"}, ...]
         """
         if not self.connected:
             return []
 
         try:
+            # 경로 포함 여부 확인
+            has_path = '/' in domain and not domain.endswith('/')
+            base_domain = domain.split('/')[0]
+
             viewport_check = "rect.top > 0 && rect.top < viewportHeight &&" if viewport_only else ""
             js_code = f'''
             (function() {{
-                var links = document.querySelectorAll('a[href*="{domain}"]');
+                var targetDomain = "{domain}";
+                var baseDomain = "{base_domain}";
+                var hasPath = {"true" if has_path else "false"};
+                var links = document.querySelectorAll('a[href*="' + baseDomain + '"]');
                 var viewportHeight = window.innerHeight;
                 var results = [];
+
                 for (var link of links) {{
+                    var href = link.getAttribute('href');
+                    if (!href) continue;
+
+                    // 1. 서브링크 제외 (data-heatmap-target='.sublink')
+                    var heatmapTarget = link.getAttribute('data-heatmap-target');
+                    if (heatmapTarget === '.sublink') continue;
+
+                    // 2. 경로 매칭 체크
+                    var isMatch = false;
+                    if (hasPath) {{
+                        // 경로가 지정된 경우: 정확한 경로 매칭
+                        if (href.endsWith(targetDomain) || href.endsWith(targetDomain + '/')) {{
+                            isMatch = true;
+                        }}
+                    }} else {{
+                        // 경로가 없는 경우: 메인 도메인만 (서브페이지 제외)
+                        if (href.endsWith(targetDomain + '/') || href.endsWith(targetDomain)) {{
+                            isMatch = true;
+                        }}
+                    }}
+
+                    if (!isMatch) continue;
+
+                    // 3. 광고 영역 제외
+                    var parent = link.parentElement;
+                    var isAd = false;
+                    while (parent) {{
+                        if (parent.classList && (
+                            parent.classList.contains('tit_area') ||
+                            parent.classList.contains('ad_area') ||
+                            parent.classList.contains('powerlink')
+                        )) {{
+                            isAd = true;
+                            break;
+                        }}
+                        parent = parent.parentElement;
+                    }}
+                    if (isAd) continue;
+
                     var rect = link.getBoundingClientRect();
                     if (rect.width > 0 && rect.height > 0 && {viewport_check} true) {{
+                        // 링크 타입 판별 (도메인/제목/설명)
+                        var linkType = 'unknown';
+                        var text = link.textContent.trim();
+                        if (text.includes(baseDomain)) {{
+                            linkType = 'domain';
+                        }} else if (rect.height > 30) {{
+                            linkType = 'title';
+                        }} else {{
+                            linkType = 'desc';
+                        }}
+
                         results.push({{
                             found: true,
                             x: Math.round(rect.left + rect.width / 2),
                             y: Math.round(rect.top + rect.height / 2),
-                            width: rect.width,
-                            height: rect.height,
-                            href: link.href,
-                            text: link.textContent.substring(0, 50),
+                            width: Math.round(rect.width),
+                            height: Math.round(rect.height),
+                            href: href,
+                            text: text.substring(0, 50),
                             center_x: Math.round(rect.left + rect.width / 2),
-                            center_y: Math.round(rect.top + rect.height / 2)
+                            center_y: Math.round(rect.top + rect.height / 2),
+                            link_type: linkType
                         }});
                     }}
                 }}
@@ -727,7 +788,12 @@ class MobileCDP:
             if result and "result" in result:
                 links = result["result"].get("value", [])
                 if links:
-                    log(f"[MobileCDP] 도메인 링크 {len(links)}개 발견: {domain}")
+                    # 링크 타입별 개수 로깅
+                    types = {}
+                    for l in links:
+                        t = l.get('link_type', 'unknown')
+                        types[t] = types.get(t, 0) + 1
+                    log(f"[MobileCDP] 도메인 링크 {len(links)}개 발견: {domain} (도메인:{types.get('domain',0)}, 제목:{types.get('title',0)}, 설명:{types.get('desc',0)})")
                     return links
 
             return []
@@ -2325,18 +2391,21 @@ class NaverSearchAutomation:
                 # MobileCDP 형식 → ADB 형식 변환
                 links = []
                 for r in results:
+                    width = r.get("width", 100)
+                    height = r.get("height", 50)
                     links.append({
                         "found": True,
                         "center_x": r["center_x"],
                         "center_y": r["center_y"],
                         "bounds": (
-                            r["x"] - r.get("width", 100) // 2,
-                            r["y"] - r.get("height", 50) // 2,
-                            r["x"] + r.get("width", 100) // 2,
-                            r["y"] + r.get("height", 50) // 2
+                            r["x"] - width // 2,
+                            r["y"] - height // 2,
+                            r["x"] + width // 2,
+                            r["y"] + height // 2
                         ),
                         "href": r.get("href", ""),
                         "text": r.get("text", ""),
+                        "link_type": r.get("link_type", "unknown"),
                         "source": "mobile_cdp"
                     })
                 return links
@@ -3270,8 +3339,13 @@ class NaverSearchAutomation:
         return False
     
     def _click_domain_link(self, visible_links, domain):
-        """도메인 링크 클릭 (하이브리드)"""
-        log(f"[발견] {domain} 링크 {len(visible_links)}개!")
+        """도메인 링크 클릭 (하이브리드) - 도메인/제목/설명 중 랜덤 선택"""
+        # 링크 타입별 개수 로깅
+        types = {}
+        for l in visible_links:
+            t = l.get('link_type', 'unknown')
+            types[t] = types.get(t, 0) + 1
+        log(f"[발견] {domain} 링크 {len(visible_links)}개! (도메인:{types.get('domain',0)}, 제목:{types.get('title',0)}, 설명:{types.get('desc',0)})")
 
         # 요소 위치에 따라 스크롤 방향 결정 (viewport 밖으로 나가지 않도록)
         first_link = visible_links[0]
@@ -3293,23 +3367,25 @@ class NaverSearchAutomation:
         # 다시 확인 (하이브리드)
         links = self._find_all_links_by_domain_hybrid(domain)
         visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
-        
+
         if visible:
             for click_try in range(3):
                 selected = random.choice(visible)
-                log(f"[클릭 {click_try + 1}/3] {selected['text'][:50]}...")
+                link_type = selected.get('link_type', 'unknown')
+                bounds = selected.get('bounds', (0,0,0,0))
+                log(f"[클릭 {click_try + 1}/3] [{link_type}] {selected['text'][:40]}... 영역:{bounds[2]-bounds[0]}x{bounds[3]-bounds[1]}px")
                 self.adb.tap_element(selected)
                 time.sleep(2)
-                
+
                 xml = self.adb.get_screen_xml(force=True)
                 nx = self.adb.find_element_by_resource_id("nx_query", xml)
-                
+
                 if not nx.get("found"):
                     log("[성공] 페이지 이동!")
                     return True
-                
+
                 log("[재시도] 페이지 변경 안 됨")
-        
+
         return False
     
     def _find_and_click_domain_in_page(self, domain):

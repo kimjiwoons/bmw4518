@@ -3,8 +3,8 @@
 ## 메타 정보
 - 프로젝트명: GeeLark ADB 네이버 검색 자동화
 - 시작일: 2025-12-29
-- 마지막 업데이트: 2025-12-29
-- 현재 세션: #3
+- 마지막 업데이트: 2025-12-30
+- 현재 세션: #4
 
 ---
 
@@ -32,6 +32,8 @@
 | 12 | 크롬 첫 실행 + 번역 팝업 처리 | adb/adb_auto.py | "Use without an account" 버튼 추가, 번역 팝업 화면 하단 탭으로 닫기 | 성공 |
 | 13 | 크롬 번역 팝업 우선 처리 | adb/adb_auto.py | 첫 실행 버튼 찾기 전 번역 팝업 먼저 감지/닫기 | 성공 |
 | 14 | 브라우저별 스크롤 보정값 설정 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG 추가 (scroll_factor, search_direction) | 성공 |
+| 15 | 크롬 번역 팝업 처리 제거 | adb/adb_auto.py | 번역 팝업 감지/닫기 로직이 엉뚱한 곳 클릭 → 제거 (나중에 해결) | 성공 |
+| 16 | 도메인/제목/설명 랜덤 클릭 | adb/adb_auto.py | MobileCDP find_all_links_by_domain에 서브링크 필터링+광고 제외+링크타입 분류 추가, 도메인/제목/설명 중 랜덤 선택 후 영역 내 랜덤 좌표 클릭 | 성공 |
 
 ---
 
@@ -49,6 +51,8 @@
 | 크롬 첫 실행 화면 처리 안 됨 | "Use without an account" 버튼 미등록 | first_run_buttons에 추가 |
 | 크롬 번역 팝업 | 초기화 시 번역 설정 리셋 | 화면 하단 탭으로 팝업 닫기 |
 | 브라우저별 스크롤 차이 | 삼성:지나침, 크롬:부족 | BROWSER_SCROLL_CONFIG로 보정값/찾기방향 설정 |
+| 크롬 번역 팝업 엉뚱한 클릭 | 팝업 감지 로직이 잘못된 곳 터치 | 일단 제거, 나중에 해결책 찾기 |
+| 도메인 영역만 클릭 | uiautomator는 도메인 텍스트만 찾음 | MobileCDP로 도메인/제목/설명 링크 모두 찾기 + 서브링크 필터링 |
 
 ---
 
@@ -93,6 +97,15 @@
 "edge":    {"scroll_factor": 1.1, "search_direction": "down"},
 "firefox": {"scroll_factor": 1.0, "search_direction": "down"},
 ```
+
+### 도메인 링크 랜덤 클릭 로직
+MobileCDP `find_all_links_by_domain` 동작:
+1. `a[href*="도메인"]`으로 모든 링크 찾기
+2. 서브링크 제외 (`data-heatmap-target='.sublink'`)
+3. 서브페이지 제외 (href가 도메인+경로로 끝나면 제외)
+4. 광고 영역 제외 (tit_area, ad_area, powerlink)
+5. 링크 타입 분류: domain/title/desc
+6. 여러 링크 중 랜덤 선택 → 해당 영역 내 랜덤 좌표 클릭
 
 ### ADB 명령어
 ```bash
