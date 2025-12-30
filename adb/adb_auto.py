@@ -2038,10 +2038,10 @@ class ADBController:
             for button_text in buttons_to_find:
                 element = self.find_element_by_text(button_text, partial=False, xml=xml)
                 if element and element.get("found"):
-                    # 버튼 위치 유효성 검사 (화면 하단 콘텐츠 영역 제외)
-                    cy = element.get("center_y", 0)
-                    if cy > self.screen_height * 0.7:
-                        log(f"[ADB] '{button_text}' 무시 (하단 콘텐츠 영역 y={cy})")
+                    # 버튼 크기 검증 (너비가 화면 70% 이상이면 컨테이너로 판단)
+                    width = element.get("width", 0)
+                    if width > self.screen_width * 0.7:
+                        log(f"[ADB] '{button_text}' 무시 (너비 {width}px > 70%, 컨테이너)")
                         continue
                     log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
                     self.tap_element(element)
@@ -2050,13 +2050,13 @@ class ADBController:
                     break
 
             if not button_found:
-                # 부분 매칭으로 재시도 (위치 검증 포함)
+                # 부분 매칭으로 재시도 (크기 검증 포함)
                 for button_text in buttons_to_find:
                     element = self.find_element_by_text(button_text, partial=True, xml=xml)
                     if element and element.get("found"):
-                        cy = element.get("center_y", 0)
-                        if cy > self.screen_height * 0.7:
-                            log(f"[ADB] '{button_text}' 무시 (하단 콘텐츠 영역 y={cy})")
+                        width = element.get("width", 0)
+                        if width > self.screen_width * 0.7:
+                            log(f"[ADB] '{button_text}' 무시 (너비 {width}px > 70%, 컨테이너)")
                             continue
                         log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
                         self.tap_element(element)
