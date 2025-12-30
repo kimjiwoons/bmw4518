@@ -57,12 +57,17 @@
 | 37 | step5/step7 스크롤 설정 분리 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG를 step5(more_*)와 step7(domain_*)로 분리. more_scroll_factor, more_overshoot, more_search_direction / domain_scroll_factor, domain_overshoot, domain_search_direction | 성공 |
 | 38 | step5 삼성 브라우저 버그 수정 | adb/adb_auto.py | more_search_direction 설정이 무시되던 버그 수정. 이제 설정에 따라 up/down 방향으로 스크롤하면서 찾기 | 성공 |
 | 39 | ElementCache 초기화 순서 버그 수정 | adb/adb_auto.py | _element_cache가 log 함수 정의 전에 생성되어 NameError 발생하던 버그 수정. 전역 인스턴스를 log 함수 뒤로 이동 | 성공 |
+| 40 | step7 삼성 브라우저 보정값 적용 | adb/adb_auto.py | _step7_samsung_template_matching()에서 domain_scroll_factor, domain_overshoot, domain_search_direction 설정값 적용 (기존: 50% 고정, 방향 하드코딩) | 성공 |
+| 41 | resource-id 캐시 파일 저장 | adb/adb_auto.py | resource-id 캐시를 메모리→파일 저장으로 변경. TTL 유지, 로드 시 만료 항목 자동 정리. 키 형식: resid|{id}|{size} | 성공 |
+| 42 | handle_browser_first_run set_device 추가 | adb/adb_auto.py | 함수 시작 시 _element_cache.set_device() 호출 추가. connect() 이전 호출 시에도 캐시 정상 작동 | 성공 |
 
 ---
 
 ## 발생한 이슈 및 해결
 | 이슈 | 원인 | 해결 방법 |
 |------|------|-----------|
+| step7 삼성 브라우저 보정값 미적용 | _step7_samsung_template_matching()에서 설정값 무시 | 함수 내에서 BROWSER_SCROLL_CONFIG 읽어서 적용 |
+| 캐시 파일 저장 안 됨 | set_device() 미호출로 _current_device_id가 None | handle_browser_first_run()에 set_device() 추가 |
 | cache 폴더 미생성 | ElementCache가 log 함수 정의 전에 생성되어 NameError | 전역 인스턴스 생성을 log 함수 정의 후로 이동 |
 | 페이지 전환됐는데 실패 판정 | 캐시된 nx_query 값으로 "여전히 존재" 판단 | 페이지 전환/로드 확인 시 use_cache=False |
 | CDP 좌표 불일치 | 삼성 브라우저 CDP 좌표가 실제 화면과 다름 | 템플릿 매칭으로 실제 화면 좌표 찾기 |
