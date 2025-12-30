@@ -48,6 +48,7 @@
 | 28 | 타입별 균등 랜덤 선택 (33%씩) | adb/adb_auto.py | _click_domain_link()를 타입별 균등 확률로 변경: 1)타입별 그룹화, 2)타입 먼저 선택(33%), 3)해당 타입 내 요소 선택 | 성공 |
 | 29 | step7 상세 디버그 로깅 | adb/adb_auto.py | [STEP7-FIND], [STEP7-CLICK] 접두사로 모든 step7 관련 로그 통일, skipped_reasons 추적, 타입별 개수/선택 과정 상세 출력 | 성공 |
 | 30 | _find_and_click_domain_in_page 통합 | adb/adb_auto.py | CDP 없을 때도 _click_domain_link() 사용하여 타입별 균등 선택 적용 | 성공 |
+| 31 | 테스트 스크립트 타입별 균등 적용 | adb/test_step7_main.py | test_random_selection()도 메인 코드와 동일한 타입별 균등 랜덤 선택 적용, 기대 확률 표시 추가 | 성공 |
 
 ---
 
@@ -81,17 +82,18 @@
 
 ## 현재 진행 중
 
-- step7 타입별 균등 랜덤 선택 + 상세 로깅 완료
-- 테스트 대기 중
+(없음)
 
 ---
 
 ## 다음 단계 (TODO)
 - [x] step7: 도메인 찾기 (삼성 브라우저용 템플릿 매칭 방식 구현) ✓
 - [x] step7: 도메인/제목/설명 랜덤 클릭 (uiautomator XML 파싱 방식) ✓
+- [x] step7: 타입별 균등 랜덤 선택 (33%씩) + 상세 디버그 로깅 ✓
 - [ ] step4_5: 통합에서 도메인 찾기 (삼성 브라우저용)
 - [ ] 도메인 텍스트 → 이미지 생성 → 템플릿 매칭 방식 검토
 - [ ] 템플릿 파일 생성: template_search.png (검색창), template_domain.png, template_sublink.png
+- [ ] 크롬 번역 팝업 처리 해결 (현재 제거됨)
 
 ---
 
