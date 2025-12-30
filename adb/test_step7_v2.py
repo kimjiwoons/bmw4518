@@ -136,43 +136,55 @@ def find_domain_and_sublinks(adb, domain, xml=None):
         xml = adb.get_screen_xml(force=True)
 
     if not xml:
+        log("[DEBUG] XML 가져오기 실패")
         return None, False
+
+    log(f"[DEBUG] XML 길이: {len(xml)}")
 
     domain_bounds = None
     has_sublink = False
 
     # 도메인 텍스트 찾기
     base_domain = domain.split('/')[0]
+    log(f"[DEBUG] 찾을 도메인: {base_domain}")
 
     # text 또는 content-desc에서 도메인 찾기
     node_pattern = rf'<node[^>]+(?:text|content-desc)="([^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*/>'
 
+    match_count = 0
     for match in re.finditer(node_pattern, xml, re.IGNORECASE):
         text, x1, y1, x2, y2 = match.groups()
         x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
-        # URL 인코딩된 텍스트 제외
-        if '%2F' in text or '%3A' in text or 'sunny?' in text.lower():
-            continue
+        # 도메인이 포함된 텍스트 찾기
+        if base_domain.lower() in text.lower():
+            match_count += 1
+            log(f"[DEBUG] 매칭 {match_count}: '{text[:60]}' bounds=[{x1},{y1}][{x2},{y2}]")
 
-        # http로 시작하는 URL 제외
-        if text.lower().startswith(('http://', 'https://')):
-            continue
+            # URL 인코딩된 텍스트 제외
+            if '%2F' in text or '%3A' in text or 'sunny?' in text.lower():
+                log(f"  → 제외 (URL 인코딩)")
+                continue
 
-        # 도메인 매칭 (정확히 도메인만, 서브페이지 제외)
-        if base_domain in text:
+            # http로 시작하는 URL 제외
+            if text.lower().startswith(('http://', 'https://')):
+                log(f"  → 제외 (http URL)")
+                continue
+
+            # 도메인 매칭 (정확히 도메인만, 서브페이지 제외)
             text_after = text.split(base_domain)[-1].strip() if base_domain in text else ""
 
             if text_after.startswith(('/', '›', '>')):
                 # 서브링크 발견
                 has_sublink = True
-                log(f"[서브링크] {text[:50]}")
+                log(f"  → 서브링크")
             else:
                 # 메인 도메인
                 if domain_bounds is None:  # 첫 번째 매칭 사용
                     domain_bounds = (x1, y1, x2, y2)
-                    log(f"[도메인] {text} bounds=[{x1},{y1}][{x2},{y2}]")
+                    log(f"  → 메인 도메인 ✓")
 
+    log(f"[DEBUG] 총 {match_count}개 매칭, 도메인 bounds: {domain_bounds}")
     return domain_bounds, has_sublink
 
 
