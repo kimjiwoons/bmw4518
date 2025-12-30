@@ -39,6 +39,8 @@
 | 19 | 도메인 아래 요소만 포함 | adb/test_step7_v2.py | elem_y < domain_y 조건으로 위쪽 검색결과 이미지 제외 | 성공 |
 | 20 | 메인코드에 로직 통합 | adb/adb_auto.py | DOMAIN_CLICK_CONFIG 추가, find_all_elements_with_domain() 완전 재작성하여 제목/설명 찾기 로직 통합 | 성공 |
 | 21 | DOMAIN_KEYWORDS 설정 추가 | adb/config.py, adb/adb_auto.py | 도메인별 제목 키워드 설정 (sidecut.co.kr → ["사이드컷", "sidecut"]), 영어 도메인으로 한글 제목 찾기 가능 | 성공 |
+| 22 | XML 속성 순서 문제 해결 | adb/adb_auto.py | content-desc 패턴을 테스트 버전과 동일하게 변경 (OR 연산자로 두 가지 속성 순서 처리) | 성공 |
+| 23 | CDP 전체 비활성화 | adb/adb_auto.py | _init_mobile_cdp()에서 모든 브라우저 CDP 명시적 비활성화 (탐지 위험 제거) | 성공 |
 
 ---
 
@@ -62,6 +64,8 @@
 | 다른 검색결과 이미지 클릭 | 도메인 위에 있는 요소도 포함됨 | elem_y < domain_y 조건으로 도메인 아래 요소만 포함 |
 | MobileCDP 탐지 위험 | CDP 활성화 시 서버에서 감지 가능 | uiautomator XML 파싱 방식으로 전환 (CDP 없이 동작) |
 | 제목 키워드 불일치 | 영어 도메인(sidecut)으로 한글 제목(사이드컷) 못 찾음 | DOMAIN_KEYWORDS 설정으로 도메인별 키워드 지정 |
+| XML 속성 순서 불일치 | content-desc 패턴이 한 가지 속성 순서만 처리 | OR 연산자(\|)로 두 가지 순서 모두 처리 (테스트 버전 패턴 적용) |
+| 크롬 CDP 활성화 시도 | 삼성만 비활성화, 크롬은 CDP 연결 시도 (버그로 실패) | _init_mobile_cdp()에서 모든 브라우저 명시적 비활성화 |
 
 ---
 
