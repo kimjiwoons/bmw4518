@@ -153,237 +153,6 @@ _scroll_cache = CDPScrollCache()
 
 
 # ============================================
-# UI 요소 위치 캐시 (고정 UI 속도 개선)
-# ============================================
-class ElementCache:
-    """UI 요소 위치 캐시 - 파일 기반, 기기별 저장
-
-    - resource-id 캐시: TTL 기반 (30분), 파일 저장
-    - 텍스트 요소 캐시: 파일 기반 (기기별, 영구 저장)
-      → 파일 삭제하면 다시 덤프
-    """
-
-    def __init__(self):
-        self._ttl = ELEMENT_CACHE_CONFIG.get("ttl_seconds", 1800)  # 30분
-        self._enabled = ELEMENT_CACHE_CONFIG.get("enabled", True)
-        self._cacheable = set(ELEMENT_CACHE_CONFIG.get("cacheable_elements", []))
-        self._cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
-
-        # 캐시 디렉토리 설정
-        cache_dir = ELEMENT_CACHE_CONFIG.get("cache_dir", "cache")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self._cache_dir = os.path.join(script_dir, cache_dir)
-
-        # 캐시 디렉토리 생성
-        if not os.path.exists(self._cache_dir):
-            os.makedirs(self._cache_dir)
-            log(f"[CACHE] 캐시 디렉토리 생성: {self._cache_dir}")
-
-        # 파일 캐시 (기기별 로드)
-        self._file_cache = {}  # {device_id: {key: data}}
-        self._current_device_id = None
-
-    def set_device(self, device_id):
-        """현재 기기 설정 및 파일 캐시 로드"""
-        if device_id == self._current_device_id:
-            return
-
-        self._current_device_id = device_id
-        self._load_file_cache(device_id)
-
-    def _get_cache_file_path(self, device_id):
-        """기기별 캐시 파일 경로"""
-        # ADB 주소에서 특수문자 제거 (파일명으로 사용)
-        safe_id = device_id.replace(":", "_").replace(".", "_")
-        return os.path.join(self._cache_dir, f"element_cache_{safe_id}.json")
-
-    def _load_file_cache(self, device_id):
-        """파일에서 캐시 로드 (TTL 만료된 resource-id 캐시 정리)"""
-        cache_file = self._get_cache_file_path(device_id)
-        try:
-            if os.path.exists(cache_file):
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    loaded = json.load(f)
-
-                # TTL 만료된 resource-id 캐시 정리
-                now = time.time()
-                cleaned = {}
-                expired_count = 0
-                for key, value in loaded.items():
-                    # resource-id 캐시는 resid| 접두사 사용
-                    if key.startswith("resid|") and isinstance(value, dict) and "timestamp" in value:
-                        if now - value["timestamp"] > self._ttl:
-                            expired_count += 1
-                            continue  # 만료됨, 제외
-                    cleaned[key] = value
-
-                self._file_cache[device_id] = cleaned
-                count = len(cleaned)
-                if expired_count > 0:
-                    log(f"[CACHE] 파일 캐시 로드: {cache_file} ({count}개 항목, {expired_count}개 만료 삭제)")
-                    self._save_file_cache(device_id)  # 정리된 캐시 저장
-                else:
-                    log(f"[CACHE] 파일 캐시 로드: {cache_file} ({count}개 항목)")
-            else:
-                self._file_cache[device_id] = {}
-                log(f"[CACHE] 새 캐시 파일 생성 예정: {cache_file}")
-        except Exception as e:
-            log(f"[CACHE] 파일 캐시 로드 실패: {e}", "WARN")
-            self._file_cache[device_id] = {}
-
-    def _save_file_cache(self, device_id):
-        """파일에 캐시 저장"""
-        cache_file = self._get_cache_file_path(device_id)
-        try:
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self._file_cache.get(device_id, {}), f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            log(f"[CACHE] 파일 캐시 저장 실패: {e}", "WARN")
-
-    def _make_key(self, element_id, screen_size=None):
-        """resource-id 캐시 키 생성 (resid 접두사 + 요소ID + 화면크기)"""
-        if screen_size:
-            return f"resid|{element_id}|{screen_size[0]}x{screen_size[1]}"
-        return f"resid|{element_id}"
-
-    def _make_text_key(self, text, browser, screen_size=None):
-        """텍스트 요소 캐시 키 생성 (브라우저 + 텍스트 + 화면크기)"""
-        if screen_size:
-            return f"text|{browser}|{text}|{screen_size[0]}x{screen_size[1]}"
-        return f"text|{browser}|{text}"
-
-    def is_cacheable(self, element_id):
-        """캐시 가능한 요소인지 확인 (resource-id)"""
-        return self._enabled and element_id in self._cacheable
-
-    def is_text_cacheable(self, text, browser):
-        """캐시 가능한 텍스트 요소인지 확인"""
-        if not self._enabled:
-            return False
-        browser_texts = self._cacheable_text.get(browser, [])
-        return text in browser_texts
-
-    def get(self, element_id, screen_size=None):
-        """캐시된 요소 정보 반환 (없거나 만료시 None) - resource-id용, 파일 기반"""
-        if not self._enabled or not self._current_device_id:
-            return None
-
-        key = self._make_key(element_id, screen_size)
-        device_cache = self._file_cache.get(self._current_device_id, {})
-
-        if key not in device_cache:
-            return None
-
-        entry = device_cache[key]
-        elapsed = time.time() - entry["timestamp"]
-
-        # TTL 만료 체크
-        if elapsed > self._ttl:
-            del device_cache[key]
-            self._save_file_cache(self._current_device_id)
-            log(f"[CACHE] '{element_id}' 만료됨 ({elapsed:.0f}초 경과)")
-            return None
-
-        log(f"[CACHE] '{element_id}' 캐시 히트! ({elapsed:.0f}초 전 저장)")
-        return entry["data"]
-
-    def set(self, element_id, data, screen_size=None):
-        """요소 정보 캐시 - resource-id용, 파일 기반"""
-        if not self._enabled or not self._current_device_id:
-            return
-
-        key = self._make_key(element_id, screen_size)
-
-        if self._current_device_id not in self._file_cache:
-            self._file_cache[self._current_device_id] = {}
-
-        self._file_cache[self._current_device_id][key] = {
-            "data": data,
-            "timestamp": time.time()
-        }
-        self._save_file_cache(self._current_device_id)
-        log(f"[CACHE] '{element_id}' 파일 캐시 저장 (TTL: {self._ttl}초)")
-
-    def get_text(self, text, browser, screen_size=None):
-        """캐시된 텍스트 요소 정보 반환 - 파일 기반 (기기별)"""
-        if not self._enabled or not self._current_device_id:
-            return None
-
-        key = self._make_text_key(text, browser, screen_size)
-        device_cache = self._file_cache.get(self._current_device_id, {})
-
-        if key in device_cache:
-            log(f"[CACHE] 텍스트 '{text}' ({browser}) 캐시 히트!")
-            return device_cache[key]
-
-        return None
-
-    def set_text(self, text, browser, data, screen_size=None):
-        """텍스트 요소 정보 캐시 - 파일 기반 (기기별)"""
-        if not self._enabled or not self._current_device_id:
-            return
-
-        key = self._make_text_key(text, browser, screen_size)
-
-        if self._current_device_id not in self._file_cache:
-            self._file_cache[self._current_device_id] = {}
-
-        self._file_cache[self._current_device_id][key] = data
-        self._save_file_cache(self._current_device_id)
-        log(f"[CACHE] 텍스트 '{text}' ({browser}) 파일 캐시 저장")
-
-    def invalidate(self, element_id=None, screen_size=None):
-        """캐시 무효화 (특정 요소 또는 전체)"""
-        if element_id is None:
-            self._cache.clear()
-            log("[CACHE] 전체 메모리 캐시 초기화")
-        else:
-            key = self._make_key(element_id, screen_size)
-            if key in self._cache:
-                del self._cache[key]
-                log(f"[CACHE] '{element_id}' 캐시 삭제")
-
-    def invalidate_text(self, text=None, browser=None, screen_size=None):
-        """텍스트 캐시 무효화 (파일 캐시)"""
-        if not self._current_device_id:
-            return
-
-        device_cache = self._file_cache.get(self._current_device_id, {})
-
-        if text is None:
-            # 전체 텍스트 캐시 삭제
-            keys_to_delete = [k for k in device_cache.keys() if k.startswith("text|")]
-            for key in keys_to_delete:
-                del device_cache[key]
-            self._save_file_cache(self._current_device_id)
-            log("[CACHE] 전체 텍스트 캐시 삭제")
-        else:
-            key = self._make_text_key(text, browser, screen_size)
-            if key in device_cache:
-                del device_cache[key]
-                self._save_file_cache(self._current_device_id)
-                log(f"[CACHE] 텍스트 '{text}' 캐시 삭제")
-
-    def get_stats(self):
-        """캐시 통계"""
-        now = time.time()
-        valid = sum(1 for e in self._cache.values() if now - e["timestamp"] < self._ttl)
-        file_count = len(self._file_cache.get(self._current_device_id, {})) if self._current_device_id else 0
-        return {
-            "memory_total": len(self._cache),
-            "memory_valid": valid,
-            "memory_expired": len(self._cache) - valid,
-            "file_count": file_count,
-            "ttl": self._ttl,
-            "device_id": self._current_device_id
-        }
-
-
-# 전역 요소 캐시 인스턴스 - log 함수 정의 후에 생성됨 (아래 참조)
-_element_cache = None
-
-
-# ============================================
 # Chrome 브라우저 자동 실행 (Headless)
 # ============================================
 class ChromeLauncher:
@@ -578,10 +347,6 @@ def log(message, level="INFO"):
         import sys
         if sys.exc_info()[0] is not None:
             tb.print_exc()
-
-
-# 전역 요소 캐시 인스턴스 생성 (log 함수 정의 후)
-_element_cache = ElementCache()
 
 
 def random_delay(min_sec, max_sec):
@@ -1790,9 +1555,6 @@ class ADBController:
             # 실제 화면 크기 자동 감지
             self._detect_screen_size()
 
-            # 기기별 파일 캐시 로드
-            _element_cache.set_device(self.adb_address)
-
             return True
         log(f"ADB 연결 실패: {result}", "ERROR")
         return False
@@ -2323,16 +2085,8 @@ class ADBController:
         self._last_xml_time = now
         return xml
     
-    def find_element_by_resource_id(self, resource_id, xml=None, use_cache=True):
-        """리소스 ID로 요소 찾기 (캐시 지원)"""
-        screen_size = (self.screen_width, self.screen_height)
-
-        # 캐시 체크 (캐시 가능한 요소이고, use_cache=True일 때)
-        if use_cache and _element_cache.is_cacheable(resource_id):
-            cached = _element_cache.get(resource_id, screen_size)
-            if cached:
-                return cached
-
+    def find_element_by_resource_id(self, resource_id, xml=None):
+        """리소스 ID로 요소 찾기"""
         # XML 가져오기
         if xml is None:
             xml = self.get_screen_xml(force=True)
@@ -2347,7 +2101,7 @@ class ADBController:
 
         if match:
             x1, y1, x2, y2 = map(int, match.groups())
-            result = {
+            return {
                 "found": True,
                 "bounds": (x1, y1, x2, y2),
                 "center_x": (x1 + x2) // 2,
@@ -2355,10 +2109,6 @@ class ADBController:
                 "width": x2 - x1,
                 "height": y2 - y1
             }
-            # 캐시 저장 (캐시 가능한 요소일 때)
-            if use_cache and _element_cache.is_cacheable(resource_id):
-                _element_cache.set(resource_id, result, screen_size)
-            return result
         return {"found": False}
     
     def find_element_by_text(self, text, partial=True, xml=None):
@@ -3441,8 +3191,7 @@ class NaverSearchAutomation:
                 # 10초 대기 (0.5초 * 20)
                 for _ in range(20):
                     xml = self.adb.get_screen_xml(force=True)
-                    # 페이지 로드 확인은 캐시 사용 안 함
-                    nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
+                    nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
                     if nx.get("found"):
                         log("[성공] 더보기 페이지 로딩 완료!")
@@ -3499,8 +3248,7 @@ class NaverSearchAutomation:
         max_wait = 50
         for _ in range(max_wait * 2):
             xml = self.adb.get_screen_xml(force=True)
-            # 페이지 로드 확인은 캐시 사용 안 함
-            nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
+            nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
             if nx.get("found"):
                 log("[성공] 더보기 페이지 로딩 완료!")
@@ -3887,8 +3635,7 @@ class NaverSearchAutomation:
             # 8. 페이지 전환 확인
             log(f"[STEP7-CLICK] 페이지 전환 확인 중...")
             xml = self.adb.get_screen_xml(force=True)
-            # 페이지 전환 확인은 캐시 사용 안 함 (실제 화면 상태 확인 필요)
-            nx = self.adb.find_element_by_resource_id("nx_query", xml, use_cache=False)
+            nx = self.adb.find_element_by_resource_id("nx_query", xml)
 
             if not nx.get("found"):
                 log(f"[STEP7-CLICK] [SUCCESS] 페이지 이동 성공!")
