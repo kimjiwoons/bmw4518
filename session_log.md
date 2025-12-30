@@ -38,6 +38,7 @@
 | 18 | 서브링크 길이 조건 추가 | adb/test_step7_v2.py | sublink_max_length=10 이하일 때만 서브링크 키워드 체크 (제목/설명 오탐 방지) | 성공 |
 | 19 | 도메인 아래 요소만 포함 | adb/test_step7_v2.py | elem_y < domain_y 조건으로 위쪽 검색결과 이미지 제외 | 성공 |
 | 20 | 메인코드에 로직 통합 | adb/adb_auto.py | DOMAIN_CLICK_CONFIG 추가, find_all_elements_with_domain() 완전 재작성하여 제목/설명 찾기 로직 통합 | 성공 |
+| 21 | DOMAIN_KEYWORDS 설정 추가 | adb/config.py, adb/adb_auto.py | 도메인별 제목 키워드 설정 (sidecut.co.kr → ["사이드컷", "sidecut"]), 영어 도메인으로 한글 제목 찾기 가능 | 성공 |
 
 ---
 
@@ -60,6 +61,7 @@
 | 제목/설명이 서브링크로 SKIP | 서브링크 키워드("스노보드")가 제목에도 포함됨 | sublink_max_length=10 조건 추가, 짧은 텍스트만 서브링크 체크 |
 | 다른 검색결과 이미지 클릭 | 도메인 위에 있는 요소도 포함됨 | elem_y < domain_y 조건으로 도메인 아래 요소만 포함 |
 | MobileCDP 탐지 위험 | CDP 활성화 시 서버에서 감지 가능 | uiautomator XML 파싱 방식으로 전환 (CDP 없이 동작) |
+| 제목 키워드 불일치 | 영어 도메인(sidecut)으로 한글 제목(사이드컷) 못 찾음 | DOMAIN_KEYWORDS 설정으로 도메인별 키워드 지정 |
 
 ---
 
@@ -123,6 +125,15 @@ DOMAIN_CLICK_CONFIG = {
     "sublink_max_length": 10,        # 서브링크 최대 길이
     "max_distance_from_domain": 300, # 도메인과 최대 거리
     "title_distance": 100,           # 제목 판단 거리
+}
+```
+
+### DOMAIN_KEYWORDS 설정 (config.py)
+도메인별 제목 키워드 - 영어 도메인으로 한글 제목 찾을 때 사용
+```python
+DOMAIN_KEYWORDS = {
+    "sidecut.co.kr": ["사이드컷", "sidecut", "신봉석"],
+    # 새 도메인 추가 시 여기에 추가
 }
 ```
 
