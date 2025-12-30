@@ -2187,7 +2187,7 @@ class ADBController:
             return False
 
     def handle_browser_first_run(self, browser="chrome", max_attempts=10):
-        """브라우저 첫 실행 설정 화면 자동 처리 (캐시 지원)
+        """브라우저 첫 실행 설정 화면 자동 처리
 
         Args:
             browser: 브라우저 종류 (chrome, samsung, edge, opera, firefox)
@@ -2195,51 +2195,23 @@ class ADBController:
 
         Returns:
             bool: 처리 완료 여부
-
-        캐시 로직:
-            - 첫 실행 버튼 위치를 기기별 파일에 캐시
-            - 캐시 있으면 XML 덤프 없이 바로 클릭
-            - 캐시 파일 삭제하면 다시 덤프하여 캐시
         """
         log(f"[ADB] 브라우저 첫 실행 설정 확인 ({browser})...")
 
-        # 기기별 캐시 설정 (connect() 이전에 호출된 경우 대비)
-        _element_cache.set_device(self.adb_address)
-
-        # 브라우저별 첫 실행 버튼 텍스트 (config.py에서 가져오거나 기본값 사용)
+        # 브라우저별 첫 실행 버튼 텍스트
         from config import ELEMENT_CACHE_CONFIG
         cacheable_text = ELEMENT_CACHE_CONFIG.get("cacheable_text_elements", {})
         first_run_buttons = cacheable_text.get(browser, [
             "동의", "계속", "Skip", "건너뛰기", "Accept", "OK"
         ])
 
-        screen_size = (self.screen_width, self.screen_height)
         last_clicked_bounds = None
         button_ever_clicked = False
 
         for attempt in range(max_attempts):
             time.sleep(1)
 
-            # 1. 캐시된 버튼 위치로 먼저 시도 (XML 덤프 없이)
-            button_found = False
-            for button_text in first_run_buttons:
-                cached = _element_cache.get_text(button_text, browser, screen_size)
-                if cached and cached.get("found"):
-                    bounds = cached.get("bounds")
-                    if bounds == last_clicked_bounds:
-                        continue
-                    log(f"[ADB] 첫 실행 버튼 캐시 사용: '{button_text}'")
-                    self.tap_element(cached)
-                    last_clicked_bounds = bounds
-                    button_ever_clicked = True
-                    time.sleep(0.5)
-                    button_found = True
-                    break
-
-            if button_found:
-                continue  # 다음 시도로
-
-            # 2. 캐시 없으면 XML 덤프하여 찾기
+            # XML 덤프하여 버튼 찾기
             xml = self.get_screen_xml(force=True)
             if not xml:
                 continue
@@ -2250,6 +2222,7 @@ class ADBController:
                 return True
 
             # 첫 실행 버튼 찾아서 클릭 (정확 매칭)
+            button_found = False
             for button_text in first_run_buttons:
                 element = self.find_element_by_text(button_text, partial=False, xml=xml)
                 if element and element.get("found"):
@@ -2257,11 +2230,6 @@ class ADBController:
                     if bounds == last_clicked_bounds:
                         continue
                     log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
-
-                    # 캐시에 저장 (다음에 XML 덤프 없이 사용)
-                    if _element_cache.is_text_cacheable(button_text, browser):
-                        _element_cache.set_text(button_text, browser, element, screen_size)
-
                     self.tap_element(element)
                     last_clicked_bounds = bounds
                     button_ever_clicked = True
@@ -2278,11 +2246,6 @@ class ADBController:
                         if bounds == last_clicked_bounds:
                             continue
                         log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
-
-                        # 캐시에 저장
-                        if _element_cache.is_text_cacheable(button_text, browser):
-                            _element_cache.set_text(button_text, browser, element, screen_size)
-
                         self.tap_element(element)
                         last_clicked_bounds = bounds
                         button_ever_clicked = True
