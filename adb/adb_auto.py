@@ -3201,10 +3201,17 @@ class NaverSearchAutomation:
                 log(f"[ERROR] 템플릿 파일 없음: {template_path}", "ERROR")
                 return None
 
+            # 브라우저별 보정값 적용 (step5: 더보기 찾기)
+            browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {})
+            more_scroll_factor = browser_config.get("more_scroll_factor", 1.0)
+            more_overshoot = browser_config.get("more_overshoot", 0)
+            more_search_direction = browser_config.get("more_search_direction", "up")
+
             # 1단계: PC에서 계산된 스크롤 횟수만큼 스크롤
             if self.cdp_info and self.cdp_info.get("more_scroll_count", 0) > 0:
-                scroll_count = self.cdp_info["more_scroll_count"]
-                log(f"[5단계] 계산된 스크롤 횟수: {scroll_count}번")
+                cdp_scroll = self.cdp_info["more_scroll_count"]
+                scroll_count = int(cdp_scroll * more_scroll_factor)
+                log(f"[5단계] 계산값: {cdp_scroll}번 × 보정({more_scroll_factor}) = {scroll_count}번")
             else:
                 scroll_count = 15  # 기본값
                 log(f"[5단계] 스크롤 횟수 기본값 사용: {scroll_count}번")
@@ -3227,7 +3234,14 @@ class NaverSearchAutomation:
                 if (i + 1) % 10 == 0:
                     log(f"[5단계] 스크롤 {i + 1}/{scroll_count}...")
 
-            log(f"[5단계] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
+            # 더보기 overshoot (지나치게 스크롤)
+            if more_overshoot > 0:
+                log(f"[5단계] 추가 스크롤: {more_overshoot}번 (더보기 overshoot)")
+                for i in range(more_overshoot):
+                    self.adb.scroll_down(compensated=True)
+                    time.sleep(random.uniform(0.1, 0.2))
+
+            log(f"[5단계] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px, 찾기방향: {more_search_direction}")
 
             # 2단계: 템플릿 매칭으로 찾기
             log("[5단계] 템플릿 매칭으로 '검색결과 더보기' 찾기...")
@@ -3263,16 +3277,23 @@ class NaverSearchAutomation:
         # ========================================
         # 다른 브라우저: 기존 CDP 방식
         # ========================================
+        # 브라우저별 보정값 적용 (step5: 더보기 찾기)
+        browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {})
+        more_scroll_factor = browser_config.get("more_scroll_factor", 1.0)
+        more_overshoot = browser_config.get("more_overshoot", 0)
+        more_search_direction = browser_config.get("more_search_direction", "down")
+
         # CDP 계산값 사용 (있으면)
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("more_scroll_count", 0) > 0:
             cdp_scroll = self.cdp_info["more_scroll_count"]
-            log(f"[CDP] 계산값 사용: {cdp_scroll}번 스크롤")
+            adjusted_scroll = int(cdp_scroll * more_scroll_factor)
+            log(f"[CDP] 계산값: {cdp_scroll}번 × 보정({more_scroll_factor}) = {adjusted_scroll}번, 찾기방향: {more_search_direction}")
 
             # 스크롤 오차 초기화
             self.adb.reset_scroll_debt()
 
-            # CDP 계산대로 스크롤
-            for i in range(cdp_scroll):
+            # 보정값 적용된 횟수만큼 스크롤
+            for i in range(adjusted_scroll):
                 self.adb.scroll_down(compensated=True)
 
                 # 읽기 멈춤 (확률적)
@@ -3284,7 +3305,14 @@ class NaverSearchAutomation:
                     time.sleep(random.uniform(0.1, 0.2))
 
                 if (i + 1) % 10 == 0:
-                    log(f"[5단계] 스크롤 {i + 1}/{cdp_scroll}...")
+                    log(f"[5단계] 스크롤 {i + 1}/{adjusted_scroll}...")
+
+            # 더보기 overshoot (지나치게 스크롤)
+            if more_overshoot > 0:
+                log(f"[5단계] 추가 스크롤: {more_overshoot}번 (더보기 overshoot)")
+                for i in range(more_overshoot):
+                    self.adb.scroll_down(compensated=True)
+                    time.sleep(random.uniform(0.1, 0.2))
 
             log(f"[CDP] 스크롤 완료, 최종 오차: {self.adb.get_scroll_debt()}px")
 
@@ -3664,15 +3692,15 @@ class NaverSearchAutomation:
         if self.cdp_info and self.cdp_info.get("calculated") and self.cdp_info.get("domain_scroll_count", -1) >= 0:
             cdp_scroll = self.cdp_info["domain_scroll_count"]
 
-            # 브라우저별 보정값 적용
-            browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {"scroll_factor": 1.0, "search_direction": "down"})
-            scroll_factor = browser_config.get("scroll_factor", 1.0)
-            search_direction = browser_config.get("search_direction", "down")
-            more_overshoot = browser_config.get("more_overshoot", 0)  # 더보기 후 추가 스크롤
+            # 브라우저별 보정값 적용 (step7: 사이트 찾기)
+            browser_config = BROWSER_SCROLL_CONFIG.get(self.browser, {})
+            domain_scroll_factor = browser_config.get("domain_scroll_factor", 1.0)
+            domain_overshoot = browser_config.get("domain_overshoot", 0)
+            search_direction = browser_config.get("domain_search_direction", "down")
 
             # 보정값 적용한 스크롤 횟수
-            adjusted_scroll = int(cdp_scroll * scroll_factor)
-            log(f"[CDP] 계산값: {cdp_scroll}번 × 보정({scroll_factor}) = {adjusted_scroll}번, 찾기방향: {search_direction}")
+            adjusted_scroll = int(cdp_scroll * domain_scroll_factor)
+            log(f"[CDP] 계산값: {cdp_scroll}번 × 보정({domain_scroll_factor}) = {adjusted_scroll}번, 찾기방향: {search_direction}")
 
             # 스크롤 오차 초기화
             self.adb.reset_scroll_debt()
@@ -3691,10 +3719,10 @@ class NaverSearchAutomation:
                 if (i + 1) % 10 == 0:
                     log(f"[7단계] 스크롤 {i + 1}/{adjusted_scroll}...")
 
-            # 더보기 후 추가 스크롤 (위로 찾기 위해 일부러 지나치게)
-            if more_overshoot > 0:
-                log(f"[CDP] 추가 스크롤: {more_overshoot}번 (더보기 overshoot)")
-                for i in range(more_overshoot):
+            # 사이트 overshoot (위로 찾기 위해 일부러 지나치게)
+            if domain_overshoot > 0:
+                log(f"[CDP] 추가 스크롤: {domain_overshoot}번 (사이트 overshoot)")
+                for i in range(domain_overshoot):
                     self.adb.scroll_down(compensated=True)
                     time.sleep(random.uniform(0.1, 0.2))
 

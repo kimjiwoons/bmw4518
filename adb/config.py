@@ -382,38 +382,58 @@ CDP_CONFIG = {
 
 # ============================================
 # 브라우저별 스크롤 보정 설정
+# step5: "검색결과 더보기" 찾기
+# step7: 도메인/사이트 찾기
 # ============================================
 BROWSER_SCROLL_CONFIG = {
-    # 삼성: 지나치는 경향 → 보정값 줄임, 위로 찾기
-    # more_overshoot: 더보기 이동 후 추가 스크롤 (위로 찾기 위해 일부러 지나침)
+    # 삼성: 지나치는 경향 → 위로 찾기
     "samsung": {
-        "scroll_factor": 0.9,      # 스크롤 90% (지나치니까)
-        "search_direction": "up",   # 위로 스크롤하면서 찾기
-        "more_overshoot": 3,        # 더보기 후 3번 더 스크롤 (지나치게 해서 위로 찾기)
+        # step5: 더보기 찾기
+        "more_scroll_factor": 1.0,       # 더보기 스크롤 100%
+        "more_overshoot": 3,             # 더보기 후 3번 더 스크롤 (지나치게)
+        "more_search_direction": "up",   # 위로 스크롤하면서 더보기 찾기
+        # step7: 사이트 찾기
+        "domain_scroll_factor": 0.9,     # 사이트 스크롤 90%
+        "domain_overshoot": 3,           # 사이트 후 3번 더 스크롤
+        "domain_search_direction": "up", # 위로 스크롤하면서 사이트 찾기
     },
-    # 크롬: 부족한 경향 → 보정값 늘림, 아래로 찾기
+    # 크롬: 부족한 경향 → 아래로 찾기
     "chrome": {
-        "scroll_factor": 1.1,      # 스크롤 110% (부족하니까)
-        "search_direction": "down", # 아래로 스크롤하면서 찾기
+        # step5: 더보기 찾기
+        "more_scroll_factor": 1.1,
         "more_overshoot": 0,
+        "more_search_direction": "down",
+        # step7: 사이트 찾기
+        "domain_scroll_factor": 1.1,
+        "domain_overshoot": 0,
+        "domain_search_direction": "down",
     },
     # 오페라: 크롬과 비슷
     "opera": {
-        "scroll_factor": 1.1,
-        "search_direction": "down",
+        "more_scroll_factor": 1.1,
         "more_overshoot": 0,
+        "more_search_direction": "down",
+        "domain_scroll_factor": 1.1,
+        "domain_overshoot": 0,
+        "domain_search_direction": "down",
     },
     # 엣지: 크롬과 비슷하게 설정
     "edge": {
-        "scroll_factor": 1.1,
-        "search_direction": "down",
+        "more_scroll_factor": 1.1,
         "more_overshoot": 0,
+        "more_search_direction": "down",
+        "domain_scroll_factor": 1.1,
+        "domain_overshoot": 0,
+        "domain_search_direction": "down",
     },
     # 파이어폭스: 기본값
     "firefox": {
-        "scroll_factor": 1.0,
-        "search_direction": "down",
+        "more_scroll_factor": 1.0,
         "more_overshoot": 0,
+        "more_search_direction": "down",
+        "domain_scroll_factor": 1.0,
+        "domain_overshoot": 0,
+        "domain_search_direction": "down",
     },
 }
 
