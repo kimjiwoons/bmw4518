@@ -20,7 +20,7 @@ import random
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from adb_auto import ADBController, NaverSearchAutomation, log
-from config import PHONE_CONFIGS, DOMAIN_KEYWORDS
+from config import PHONES, DOMAIN_KEYWORDS
 
 def test_find_domain(adb, domain):
     """도메인/제목/설명 찾기 테스트"""
@@ -126,14 +126,14 @@ def main():
 
     # 폰 설정 찾기
     phone_config = None
-    for config in PHONE_CONFIGS:
+    for config in PHONES.values():
         if config.get("name") == args.phone:
             phone_config = config
             break
 
     if not phone_config:
         log(f"[에러] 폰 '{args.phone}' 설정을 찾을 수 없습니다.")
-        log(f"가능한 폰: {[c.get('name') for c in PHONE_CONFIGS]}")
+        log(f"가능한 폰: {[c.get('name') for c in PHONES.values()]}")
         return
 
     log(f"[INFO] 폰: {args.phone}")
