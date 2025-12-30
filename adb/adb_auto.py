@@ -2400,33 +2400,18 @@ class NaverSearchAutomation:
         self._mobile_cdp_initialized = False
 
     def _init_mobile_cdp(self):
-        """모바일 브라우저 CDP 초기화
+        """모바일 브라우저 CDP 초기화 - 탐지 위험으로 전체 비활성화
 
-        - 크롬: MobileCDP 활성화 (도메인/제목/설명 링크 찾기용)
-        - 삼성/기타: 비활성화 (CDP 좌표 불일치, 탐지 위험)
-
-        MobileCDP는 읽기 전용으로 요소 찾기만 함. 실제 클릭은 ADB로 함.
+        CDP 연결 시 서버에서 감지 가능성이 있어 uiautomator만 사용.
         """
         self._mobile_cdp_initialized = True
 
-        # 삼성 브라우저는 CDP 좌표가 안 맞아서 비활성화
-        if self.browser == "samsung":
-            self.mobile_cdp = None
-            log("[INFO] 삼성 브라우저: MobileCDP 비활성화 (좌표 불일치)")
-            return
-
-        # 크롬은 MobileCDP 활성화 (도메인/제목/설명 링크 찾기용)
-        try:
-            cdp = MobileCDP(self.adb.address, browser=self.browser)
-            if cdp.connect():
-                self.mobile_cdp = cdp
-                log(f"[INFO] {self.browser} MobileCDP 연결 성공")
-            else:
-                self.mobile_cdp = None
-                log(f"[WARN] {self.browser} MobileCDP 연결 실패, uiautomator 사용")
-        except Exception as e:
-            self.mobile_cdp = None
-            log(f"[WARN] MobileCDP 초기화 오류: {e}")
+        # ====================================
+        # 탐지 위험: 모든 브라우저 CDP 비활성화
+        # ====================================
+        self.mobile_cdp = None
+        log(f"[INFO] {self.browser}: MobileCDP 비활성화 (탐지 위험)")
+        return
 
     def _find_element_by_text_hybrid(self, text, check_viewport=True, exact_match=False):
         """하이브리드 요소 찾기: MobileCDP 우선, 실패시 uiautomator
