@@ -3526,6 +3526,13 @@ class NaverSearchAutomation:
         links = self._find_all_links_by_domain_hybrid(domain)
         visible = [l for l in links if self.viewport_top <= l["center_y"] <= self.viewport_bottom]
 
+        # 랜덤 선택 디버그 로그
+        types_visible = {}
+        for l in visible:
+            t = l.get('link_type', 'unknown')
+            types_visible[t] = types_visible.get(t, 0) + 1
+        log(f"[랜덤] 선택 대상: {len(visible)}개 (도메인:{types_visible.get('domain',0)}, 제목:{types_visible.get('title',0)}, 설명:{types_visible.get('desc',0)})")
+
         if visible:
             for click_try in range(3):
                 selected = random.choice(visible)
