@@ -2014,6 +2014,7 @@ class ADBController:
         }
 
         buttons_to_find = first_run_buttons.get(browser, first_run_buttons["chrome"])
+        last_clicked_bounds = None  # 마지막 클릭한 버튼 bounds (중복 클릭 방지)
 
         for attempt in range(max_attempts):
             time.sleep(1)
@@ -2032,8 +2033,14 @@ class ADBController:
             for button_text in buttons_to_find:
                 element = self.find_element_by_text(button_text, partial=False, xml=xml)
                 if element and element.get("found"):
+                    bounds = element.get("bounds")
+                    # 같은 bounds의 버튼은 중복 클릭 방지
+                    if bounds == last_clicked_bounds:
+                        log(f"[ADB] '{button_text}' 이미 클릭함, 건너뜀 (페이지 전환 대기)")
+                        continue
                     log(f"[ADB] 첫 실행 버튼 발견: '{button_text}'")
                     self.tap_element(element)
+                    last_clicked_bounds = bounds
                     time.sleep(0.5)
                     button_found = True
                     break
@@ -2043,8 +2050,13 @@ class ADBController:
                 for button_text in buttons_to_find:
                     element = self.find_element_by_text(button_text, partial=True, xml=xml)
                     if element and element.get("found"):
+                        bounds = element.get("bounds")
+                        if bounds == last_clicked_bounds:
+                            log(f"[ADB] '{button_text}' 이미 클릭함, 건너뜀 (페이지 전환 대기)")
+                            continue
                         log(f"[ADB] 첫 실행 버튼 발견 (부분): '{button_text}'")
                         self.tap_element(element)
+                        last_clicked_bounds = bounds
                         time.sleep(0.5)
                         button_found = True
                         break
