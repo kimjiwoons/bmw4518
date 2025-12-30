@@ -3251,14 +3251,18 @@ class NaverSearchAutomation:
                 log(f"[발견] 템플릿 매칭 성공! 위치: ({result['x']}, {result['y']})")
                 return result
 
-            # 3단계: 못 찾으면 위로 200~300px씩 스크롤하면서 템플릿 비교
-            log("[5단계] 템플릿 못 찾음, 위로 스크롤하면서 찾기...")
-            max_up_scrolls = 30  # 최대 30번 위로 스크롤
+            # 3단계: 못 찾으면 설정된 방향으로 스크롤하면서 템플릿 비교
+            direction_text = "위로" if more_search_direction == "up" else "아래로"
+            log(f"[5단계] 템플릿 못 찾음, {direction_text} 스크롤하면서 찾기...")
+            max_search_scrolls = 30  # 최대 30번 스크롤
 
-            for i in range(max_up_scrolls):
-                # 200~300px 랜덤 스크롤
+            for i in range(max_search_scrolls):
+                # 200~300px 랜덤 스크롤 (방향에 따라)
                 scroll_amount = random.randint(200, 300)
-                self.adb.scroll_up(scroll_amount)
+                if more_search_direction == "up":
+                    self.adb.scroll_up(scroll_amount)
+                else:
+                    self.adb.scroll_down(scroll_amount)
                 time.sleep(random.uniform(0.3, 0.5))
 
                 # 템플릿 매칭
@@ -3269,7 +3273,7 @@ class NaverSearchAutomation:
                     return result
 
                 if (i + 1) % 5 == 0:
-                    log(f"[5단계] 위로 스크롤 {i + 1}/{max_up_scrolls}...")
+                    log(f"[5단계] {direction_text} 스크롤 {i + 1}/{max_search_scrolls}...")
 
             log(f"[실패] '{target}' 못 찾음 (템플릿 매칭 실패)", "ERROR")
             return None
