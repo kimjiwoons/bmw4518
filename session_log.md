@@ -56,12 +56,14 @@
 | 36 | step7 overshoot 설정 추가 | adb/config.py, adb/adb_auto.py | 삼성 브라우저용 more_overshoot 설정 추가. 스크롤 후 추가 N번 더 스크롤하여 지나치게 한 뒤 위로 찾기 | 성공 |
 | 37 | step5/step7 스크롤 설정 분리 | adb/config.py, adb/adb_auto.py | BROWSER_SCROLL_CONFIG를 step5(more_*)와 step7(domain_*)로 분리. more_scroll_factor, more_overshoot, more_search_direction / domain_scroll_factor, domain_overshoot, domain_search_direction | 성공 |
 | 38 | step5 삼성 브라우저 버그 수정 | adb/adb_auto.py | more_search_direction 설정이 무시되던 버그 수정. 이제 설정에 따라 up/down 방향으로 스크롤하면서 찾기 | 성공 |
+| 39 | ElementCache 초기화 순서 버그 수정 | adb/adb_auto.py | _element_cache가 log 함수 정의 전에 생성되어 NameError 발생하던 버그 수정. 전역 인스턴스를 log 함수 뒤로 이동 | 성공 |
 
 ---
 
 ## 발생한 이슈 및 해결
 | 이슈 | 원인 | 해결 방법 |
 |------|------|-----------|
+| cache 폴더 미생성 | ElementCache가 log 함수 정의 전에 생성되어 NameError | 전역 인스턴스 생성을 log 함수 정의 후로 이동 |
 | 페이지 전환됐는데 실패 판정 | 캐시된 nx_query 값으로 "여전히 존재" 판단 | 페이지 전환/로드 확인 시 use_cache=False |
 | CDP 좌표 불일치 | 삼성 브라우저 CDP 좌표가 실제 화면과 다름 | 템플릿 매칭으로 실제 화면 좌표 찾기 |
 | easyocr 메모리 오류 | GPU 메모리 부족 | OpenCV 템플릿 매칭으로 대체 |
